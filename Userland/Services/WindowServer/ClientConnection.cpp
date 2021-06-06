@@ -20,7 +20,6 @@
 #include <WindowServer/WindowManager.h>
 #include <WindowServer/WindowSwitcher.h>
 #include <errno.h>
-#include <serenity.h>
 #include <stdio.h>
 #include <unistd.h>
 
@@ -53,6 +52,8 @@ ClientConnection::ClientConnection(NonnullRefPtr<Core::LocalSocket> client_socke
     if (!s_connections)
         s_connections = new HashMap<int, NonnullRefPtr<ClientConnection>>;
     s_connections->set(client_id, *this);
+
+    async_fast_greet(Screen::the().rect(), Gfx::current_system_theme_buffer(), Gfx::FontDatabase::default_font_query(), Gfx::FontDatabase::fixed_width_font_query());
 }
 
 ClientConnection::~ClientConnection()
@@ -81,12 +82,10 @@ void ClientConnection::notify_about_new_screen_rect(Gfx::IntRect const& rect)
     async_screen_rect_changed(rect);
 }
 
-Messages::WindowServer::CreateMenubarResponse ClientConnection::create_menubar()
+void ClientConnection::create_menubar(i32 menubar_id)
 {
-    int menubar_id = m_next_menubar_id++;
     auto menubar = Menubar::create(*this, menubar_id);
     m_menubars.set(menubar_id, move(menubar));
-    return menubar_id;
 }
 
 void ClientConnection::destroy_menubar(i32 menubar_id)
@@ -99,12 +98,10 @@ void ClientConnection::destroy_menubar(i32 menubar_id)
     m_menubars.remove(it);
 }
 
-Messages::WindowServer::CreateMenuResponse ClientConnection::create_menu(String const& menu_title)
+void ClientConnection::create_menu(i32 menu_id, String const& menu_title)
 {
-    int menu_id = m_next_menu_id++;
     auto menu = Menu::construct(this, menu_id, menu_title);
     m_menus.set(menu_id, move(menu));
-    return menu_id;
 }
 
 void ClientConnection::destroy_menu(i32 menu_id)
@@ -366,6 +363,10 @@ Messages::WindowServer::SetWindowRectResponse ClientConnection::set_window_rect(
         dbgln("ClientConnection: Ignoring SetWindowRect request for fullscreen window");
         return nullptr;
     }
+    if (rect.width() > INT16_MAX || rect.height() > INT16_MAX) {
+        did_misbehave(String::formatted("SetWindowRect: Bad window sizing(width={}, height={}), dimension exceeds INT16_MAX", rect.width(), rect.height()).characters());
+        return nullptr;
+    }
 
     if (rect.location() != window.rect().location()) {
         window.set_default_positioned(false);
@@ -464,6 +465,11 @@ Messages::WindowServer::CreateWindowResponse ClientConnection::create_window(Gfx
         }
     }
 
+    if (type < 0 || type >= (i32)WindowType::_Count) {
+        did_misbehave("CreateWindow with a bad type");
+        return nullptr;
+    }
+
     int window_id = m_next_window_id++;
     auto window = Window::construct(*this, (WindowType)type, window_id, modal, minimizable, frameless, resizable, fullscreen, accessory, parent_window);
 
@@ -491,7 +497,8 @@ Messages::WindowServer::CreateWindowResponse ClientConnection::create_window(Gfx
     window->set_alpha_hit_threshold(alpha_hit_threshold);
     window->set_size_increment(size_increment);
     window->set_base_size(base_size);
-    window->set_resize_aspect_ratio(resize_aspect_ratio);
+    if (resize_aspect_ratio.has_value() && !resize_aspect_ratio.value().is_null())
+        window->set_resize_aspect_ratio(resize_aspect_ratio);
     window->invalidate(true, true);
     if (window->type() == WindowType::Applet)
         AppletManager::the().add_applet(*window);
@@ -589,13 +596,17 @@ void ClientConnection::set_window_backing_store(i32 window_id, [[maybe_unused]] 
         window.swap_backing_stores();
     } else {
         // FIXME: Plumb scale factor here eventually.
-        auto backing_store = Gfx::Bitmap::create_with_anon_fd(
+        Core::AnonymousBuffer buffer = Core::AnonymousBuffer::create_from_anon_fd(anon_file.take_fd(), pitch * size.height());
+        if (!buffer.is_valid()) {
+            did_misbehave("SetWindowBackingStore: Failed to create anonymous buffer for window backing store");
+            return;
+        }
+        auto backing_store = Gfx::Bitmap::create_with_anonymous_buffer(
             has_alpha_channel ? Gfx::BitmapFormat::BGRA8888 : Gfx::BitmapFormat::BGRx8888,
-            anon_file.take_fd(),
+            buffer,
             size,
             1,
-            {},
-            Gfx::Bitmap::ShouldCloseAnonymousFile::Yes);
+            {});
         window.set_backing_store(move(backing_store), serial);
     }
 
@@ -685,11 +696,6 @@ void ClientConnection::start_window_resize(i32 window_id)
     WindowManager::the().start_window_resize(window, Screen::the().cursor_location(), MouseButton::Left);
 }
 
-Messages::WindowServer::GreetResponse ClientConnection::greet()
-{
-    return { Screen::the().rect(), Gfx::current_system_theme_buffer() };
-}
-
 Messages::WindowServer::StartDragResponse ClientConnection::start_drag(String const& text, HashMap<String, ByteBuffer> const& mime_data, Gfx::ShareableBitmap const& drag_bitmap)
 {
     auto& wm = WindowManager::the();
@@ -711,6 +717,31 @@ Messages::WindowServer::GetSystemThemeResponse ClientConnection::get_system_them
     auto wm_config = Core::ConfigFile::open("/etc/WindowServer.ini");
     auto name = wm_config->read_entry("Theme", "Name");
     return name;
+}
+
+Messages::WindowServer::SetSystemFontsResponse ClientConnection::set_system_fonts(String const& default_font_query, String const& fixed_width_font_query)
+{
+    if (!Gfx::FontDatabase::the().get_by_name(default_font_query)
+        || !Gfx::FontDatabase::the().get_by_name(fixed_width_font_query)) {
+        dbgln("Received unusable font queries: '{}' and '{}'", default_font_query, fixed_width_font_query);
+        return false;
+    }
+
+    dbgln("Updating fonts: '{}' and '{}'", default_font_query, fixed_width_font_query);
+
+    Gfx::FontDatabase::set_default_font_query(default_font_query);
+    Gfx::FontDatabase::set_fixed_width_font_query(fixed_width_font_query);
+
+    ClientConnection::for_each_client([&](auto& client) {
+        client.async_update_system_fonts(default_font_query, fixed_width_font_query);
+    });
+
+    WindowManager::the().invalidate_after_theme_or_font_change();
+
+    auto wm_config = Core::ConfigFile::open("/etc/WindowServer.ini");
+    wm_config->write_entry("Fonts", "Default", default_font_query);
+    wm_config->write_entry("Fonts", "FixedWidth", fixed_width_font_query);
+    return true;
 }
 
 void ClientConnection::set_window_base_size_and_size_increment(i32 window_id, Gfx::IntSize const& base_size, Gfx::IntSize const& size_increment)
@@ -839,7 +870,7 @@ void ClientConnection::set_unresponsive(bool unresponsive)
     m_unresponsive = unresponsive;
     for (auto& it : m_windows) {
         auto& window = *it.value;
-        window.invalidate();
+        window.invalidate(true, true);
         if (unresponsive) {
             window.set_cursor_override(WindowManager::the().wait_cursor());
         } else {
@@ -863,8 +894,12 @@ void ClientConnection::did_become_responsive()
     set_unresponsive(false);
 }
 
-Messages::WindowServer::GetScreenBitmapResponse ClientConnection::get_screen_bitmap()
+Messages::WindowServer::GetScreenBitmapResponse ClientConnection::get_screen_bitmap(Optional<Gfx::IntRect> const& rect)
 {
+    if (rect.has_value()) {
+        auto bitmap = Compositor::the().front_bitmap_for_screenshot({}).cropped(rect.value());
+        return bitmap->to_shareable_bitmap();
+    }
     auto& bitmap = Compositor::the().front_bitmap_for_screenshot({});
     return bitmap.to_shareable_bitmap();
 }
@@ -878,6 +913,11 @@ Messages::WindowServer::IsWindowModifiedResponse ClientConnection::is_window_mod
     }
     auto& window = *it->value;
     return window.is_modified();
+}
+
+Messages::WindowServer::GetDesktopDisplayScaleResponse ClientConnection::get_desktop_display_scale()
+{
+    return WindowManager::the().scale_factor();
 }
 
 void ClientConnection::set_window_modified(i32 window_id, bool modified)

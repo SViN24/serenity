@@ -1,5 +1,6 @@
 /*
  * Copyright (c) 2018-2020, Andreas Kling <kling@serenityos.org>
+ * Copyright (c) 2021, sin-ack <sin-ack@protonmail.com>
  *
  * SPDX-License-Identifier: BSD-2-Clause
  */
@@ -8,7 +9,7 @@
 
 #include <AK/Function.h>
 #include <AK/HashTable.h>
-#include <AK/InlineLinkedList.h>
+#include <AK/IntrusiveList.h>
 #include <AK/RefCounted.h>
 #include <AK/String.h>
 #include <AK/WeakPtr.h>
@@ -23,8 +24,7 @@
 namespace Kernel {
 
 class Inode : public RefCounted<Inode>
-    , public Weakable<Inode>
-    , public InlineLinkedListNode<Inode> {
+    , public Weakable<Inode> {
     friend class VFS;
     friend class FS;
 
@@ -90,7 +90,6 @@ public:
     RefPtr<SharedInodeVMObject> shared_vmobject() const;
     bool is_shared_vmobject(const SharedInodeVMObject&) const;
 
-    static InlineLinkedList<Inode>& all_with_lock();
     static void sync();
 
     bool has_watchers() const { return !m_watchers.is_empty(); }
@@ -100,19 +99,15 @@ public:
 
     NonnullRefPtr<FIFO> fifo();
 
-    // For InlineLinkedListNode.
-    Inode* m_next { nullptr };
-    Inode* m_prev { nullptr };
-
-    static SpinLock<u32>& all_inodes_lock();
-
 protected:
     Inode(FS& fs, InodeIndex);
     void set_metadata_dirty(bool);
     KResult prepare_to_write_data();
 
-    void did_add_child(const InodeIdentifier&);
-    void did_remove_child(const InodeIdentifier&);
+    void did_add_child(InodeIdentifier const& child_id, String const& name);
+    void did_remove_child(InodeIdentifier const& child_id, String const& name);
+    void did_modify_contents();
+    void did_delete_self();
 
     mutable Lock m_lock { "Inode" };
 
@@ -124,6 +119,10 @@ private:
     HashTable<InodeWatcher*> m_watchers;
     bool m_metadata_dirty { false };
     RefPtr<FIFO> m_fifo;
+    IntrusiveListNode<Inode> m_inode_list_node;
+
+public:
+    using List = IntrusiveList<Inode, RawPtr<Inode>, &Inode::m_inode_list_node>;
 };
 
 }

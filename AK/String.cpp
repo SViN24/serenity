@@ -15,11 +15,6 @@
 
 namespace AK {
 
-String::String(const StringView& view)
-{
-    m_impl = StringImpl::create(view.characters_without_null_termination(), view.length());
-}
-
 bool String::operator==(const FlyString& fly_string) const
 {
     return *this == String(fly_string.impl());
@@ -70,11 +65,6 @@ bool String::operator>(const String& other) const
         return false;
 
     return strcmp(characters(), other.characters()) > 0;
-}
-
-String String::empty()
-{
-    return StringImpl::the_empty_stringimpl();
 }
 
 bool String::copy_characters_to_buffer(char* buffer, size_t buffer_size) const
@@ -234,6 +224,7 @@ bool String::ends_with(char ch) const
         return false;
     return characters()[length() - 1] == ch;
 }
+
 String String::repeated(char ch, size_t count)
 {
     if (!count)
@@ -241,6 +232,17 @@ String String::repeated(char ch, size_t count)
     char* buffer;
     auto impl = StringImpl::create_uninitialized(count, buffer);
     memset(buffer, ch, count);
+    return *impl;
+}
+
+String String::repeated(const StringView& string, size_t count)
+{
+    if (!count || string.is_empty())
+        return empty();
+    char* buffer;
+    auto impl = StringImpl::create_uninitialized(count * string.length(), buffer);
+    for (size_t i = 0; i < count; i++)
+        __builtin_memcpy(buffer + i * string.length(), string.characters_without_null_termination(), string.length());
     return *impl;
 }
 
@@ -286,28 +288,13 @@ bool String::contains(const StringView& needle, CaseSensitivity case_sensitivity
     return StringUtils::contains(*this, needle, case_sensitivity);
 }
 
-Optional<size_t> String::index_of(const String& needle, size_t start) const
-{
-    if (is_null() || needle.is_null())
-        return {};
-
-    const char* self_characters = characters();
-    const char* result = strstr(self_characters + start, needle.characters());
-    if (!result)
-        return {};
-    return Optional<size_t> { result - self_characters };
-}
-
 bool String::equals_ignoring_case(const StringView& other) const
 {
     return StringUtils::equals_ignoring_case(view(), other);
 }
 
-int String::replace(const String& needle, const String& replacement, bool all_occurrences)
+Vector<size_t> String::find_all(const String& needle) const
 {
-    if (is_empty())
-        return 0;
-
     Vector<size_t> positions;
     size_t start = 0, pos;
     for (;;) {
@@ -317,10 +304,25 @@ int String::replace(const String& needle, const String& replacement, bool all_oc
 
         pos = ptr - characters();
         positions.append(pos);
-        if (!all_occurrences)
-            break;
 
         start = pos + 1;
+    }
+    return positions;
+}
+
+int String::replace(const String& needle, const String& replacement, bool all_occurrences)
+{
+    if (is_empty())
+        return 0;
+
+    Vector<size_t> positions;
+    if (all_occurrences) {
+        positions = find_all(needle);
+    } else {
+        auto pos = find(needle);
+        if (!pos.has_value())
+            return 0;
+        positions.append(pos.value());
     }
 
     if (!positions.size())
@@ -336,6 +338,22 @@ int String::replace(const String& needle, const String& replacement, bool all_oc
     b.append(substring_view(lastpos, length() - lastpos));
     m_impl = StringImpl::create(b.build().characters());
     return positions.size();
+}
+
+size_t String::count(const String& needle) const
+{
+    size_t count = 0;
+    size_t start = 0, pos;
+    for (;;) {
+        const char* ptr = strstr(characters() + start, needle.characters());
+        if (!ptr)
+            break;
+
+        pos = ptr - characters();
+        count++;
+        start = pos + 1;
+    }
+    return count;
 }
 
 String String::reverse() const
@@ -428,11 +446,6 @@ bool String::operator==(const char* cstring) const
     return !__builtin_strcmp(characters(), cstring);
 }
 
-StringView String::view() const
-{
-    return { characters(), length() };
-}
-
 InputStream& operator>>(InputStream& stream, String& string)
 {
     StringBuilder builder;
@@ -463,14 +476,17 @@ String String::vformatted(StringView fmtstr, TypeErasedFormatParams params)
     return builder.to_string();
 }
 
-Optional<size_t> String::find(char c) const
+Optional<size_t> String::find(char c, size_t start) const
 {
-    return find(StringView { &c, 1 });
+    return find(StringView { &c, 1 }, start);
 }
 
-Optional<size_t> String::find(const StringView& view) const
+Optional<size_t> String::find(StringView const& view, size_t start) const
 {
-    return StringUtils::find(*this, view);
+    auto index = StringUtils::find(substring_view(start), view);
+    if (!index.has_value())
+        return {};
+    return index.value() + start;
 }
 
 }

@@ -182,6 +182,7 @@ public:
     }
 
     bool update_theme(String theme_path, String theme_name);
+    void invalidate_after_theme_or_font_change();
 
     bool set_hovered_window(Window*);
     void deliver_mouse_event(Window& window, MouseEvent& event, bool process_double_click);
@@ -283,7 +284,7 @@ private:
     RefPtr<Cursor> m_wait_cursor;
     RefPtr<Cursor> m_crosshair_cursor;
 
-    InlineLinkedList<Window> m_windows_in_order;
+    Window::List m_windows_in_order;
 
     struct DoubleClickInfo {
         struct ClickMetadata {
@@ -410,16 +411,18 @@ IterationDecision WindowManager::for_each_visible_window_of_type_from_front_to_b
             return IterationDecision::Break;
     }
 
-    for (auto* window = m_windows_in_order.tail(); window; window = window->prev()) {
-        if (!window->is_visible())
+    auto reverse_iterator = m_windows_in_order.rbegin();
+    for (; reverse_iterator != m_windows_in_order.rend(); ++reverse_iterator) {
+        auto& window = *reverse_iterator;
+        if (!window.is_visible())
             continue;
-        if (window->is_minimized())
+        if (window.is_minimized())
             continue;
-        if (window->type() != type)
+        if (window.type() != type)
             continue;
-        if (!ignore_highlight && window == m_highlight_window)
+        if (!ignore_highlight && &window == m_highlight_window)
             continue;
-        if (callback(*window) == IterationDecision::Break)
+        if (callback(window) == IterationDecision::Break)
             return IterationDecision::Break;
     }
     return IterationDecision::Continue;
@@ -462,8 +465,10 @@ void WindowManager::for_each_window_manager(Callback callback)
 template<typename Callback>
 void WindowManager::for_each_window(Callback callback)
 {
-    for (auto* window = m_windows_in_order.tail(); window; window = window->prev()) {
-        if (callback(*window) == IterationDecision::Break)
+    auto reverse_iterator = m_windows_in_order.rbegin();
+    for (; reverse_iterator != m_windows_in_order.rend(); ++reverse_iterator) {
+        auto& window = *reverse_iterator;
+        if (callback(window) == IterationDecision::Break)
             return;
     }
 }
@@ -476,12 +481,14 @@ IterationDecision WindowManager::for_each_window_of_type_from_front_to_back(Wind
             return IterationDecision::Break;
     }
 
-    for (auto* window = m_windows_in_order.tail(); window; window = window->prev()) {
-        if (window->type() != type)
+    auto reverse_iterator = m_windows_in_order.rbegin();
+    for (; reverse_iterator != m_windows_in_order.rend(); ++reverse_iterator) {
+        auto& window = *reverse_iterator;
+        if (window.type() != type)
             continue;
-        if (!ignore_highlight && window == m_highlight_window)
+        if (!ignore_highlight && &window == m_highlight_window)
             continue;
-        if (callback(*window) == IterationDecision::Break)
+        if (callback(window) == IterationDecision::Break)
             return IterationDecision::Break;
     }
     return IterationDecision::Continue;

@@ -82,7 +82,7 @@ volatile AHCI::HBA& AHCIController::hba() const
 AHCIController::AHCIController(PCI::Address address)
     : StorageController()
     , PCI::DeviceController(address)
-    , m_hba_region(hba_region())
+    , m_hba_region(default_hba_region())
     , m_capabilities(capabilities())
 {
     initialize();
@@ -116,8 +116,8 @@ AHCI::HBADefinedCapabilities AHCIController::capabilities() const
         (capabilities & (u32)(AHCI::HBACapabilities::SSNTF)) != 0,
         (capabilities & (u32)(AHCI::HBACapabilities::SNCQ)) != 0,
         (capabilities & (u32)(AHCI::HBACapabilities::S64A)) != 0,
-        (capabilities & (u32)(AHCI::HBACapabilitiesExtended::BOH)) != 0,
-        (capabilities & (u32)(AHCI::HBACapabilitiesExtended::NVMP)) != 0,
+        (extended_capabilities & (u32)(AHCI::HBACapabilitiesExtended::BOH)) != 0,
+        (extended_capabilities & (u32)(AHCI::HBACapabilitiesExtended::NVMP)) != 0,
         (extended_capabilities & (u32)(AHCI::HBACapabilitiesExtended::APST)) != 0,
         (extended_capabilities & (u32)(AHCI::HBACapabilitiesExtended::SDS)) != 0,
         (extended_capabilities & (u32)(AHCI::HBACapabilitiesExtended::SADM)) != 0,
@@ -125,7 +125,7 @@ AHCI::HBADefinedCapabilities AHCIController::capabilities() const
     };
 }
 
-NonnullOwnPtr<Region> AHCIController::hba_region() const
+NonnullOwnPtr<Region> AHCIController::default_hba_region() const
 {
     auto region = MM.allocate_kernel_region(PhysicalAddress(PCI::get_BAR5(pci_address())).page_base(), page_round_up(sizeof(AHCI::HBA)), "AHCI HBA", Region::Access::Read | Region::Access::Write);
     return region.release_nonnull();
@@ -137,13 +137,11 @@ AHCIController::~AHCIController()
 
 void AHCIController::initialize()
 {
-    if (kernel_command_line().ahci_reset_mode() != AHCIResetMode::None) {
-        if (!reset()) {
-            dmesgln("{}: AHCI controller reset failed", pci_address());
-            return;
-        }
-        dmesgln("{}: AHCI controller reset", pci_address());
+    if (!reset()) {
+        dmesgln("{}: AHCI controller reset failed", pci_address());
+        return;
     }
+    dmesgln("{}: AHCI controller reset", pci_address());
     dbgln("{}: AHCI command list entries count - {}", pci_address(), hba_capabilities().max_command_list_entries_count);
 
     u32 version = hba().control_regs.version;
@@ -183,7 +181,7 @@ RefPtr<StorageDevice> AHCIController::device_by_port(u32 port_index) const
 RefPtr<StorageDevice> AHCIController::device(u32 index) const
 {
     NonnullRefPtrVector<StorageDevice> connected_devices;
-    for (size_t index = 0; index < (size_t)(hba().control_regs.cap & 0x1F); index++) {
+    for (size_t index = 0; index < capabilities().ports_count; index++) {
         auto checked_device = device_by_port(index);
         if (checked_device.is_null())
             continue;

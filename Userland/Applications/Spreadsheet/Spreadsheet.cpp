@@ -46,7 +46,7 @@ Sheet::Sheet(Workbook& workbook)
     global_object().put("thisSheet", &global_object()); // Self-reference is unfortunate, but required.
 
     // Sadly, these have to be evaluated once per sheet.
-    auto file_or_error = Core::File::open("/res/js/Spreadsheet/runtime.js", Core::IODevice::OpenMode::ReadOnly);
+    auto file_or_error = Core::File::open("/res/js/Spreadsheet/runtime.js", Core::OpenMode::ReadOnly);
     if (!file_or_error.is_error()) {
         auto buffer = file_or_error.value()->read_all();
         JS::Parser parser { JS::Lexer(buffer) };
@@ -706,7 +706,7 @@ URL Position::to_url(const Sheet& sheet) const
     URL url;
     url.set_protocol("spreadsheet");
     url.set_host("cell");
-    url.set_path(String::formatted("/{}", getpid()));
+    url.set_paths({ String::number(getpid()) });
     url.set_fragment(to_cell_identifier(sheet));
     return url;
 }

@@ -1,7 +1,7 @@
 /*
  * Copyright (c) 2018-2020, Andreas Kling <kling@serenityos.org>
  * Copyright (c) 2020, Itamar S. <itamar8910@gmail.com>
- * Copyright (c) 2020, the SerenityOS developers.
+ * Copyright (c) 2020-2021, the SerenityOS developers.
  *
  * SPDX-License-Identifier: BSD-2-Clause
  */
@@ -24,6 +24,7 @@
 #include "TerminalWrapper.h"
 #include <AK/LexicalPath.h>
 #include <AK/StringBuilder.h>
+#include <Kernel/API/InodeWatcherEvent.h>
 #include <LibCore/ArgsParser.h>
 #include <LibCore/Event.h>
 #include <LibCore/EventLoop.h>
@@ -59,8 +60,8 @@
 #include <LibGUI/Window.h>
 #include <LibGfx/FontDatabase.h>
 #include <LibGfx/Palette.h>
-#include <LibThread/Lock.h>
-#include <LibThread/Thread.h>
+#include <LibThreading/Lock.h>
+#include <LibThreading/Thread.h>
 #include <LibVT/TerminalWidget.h>
 #include <fcntl.h>
 #include <spawn.h>
@@ -131,6 +132,24 @@ HackStudioWidget::HackStudioWidget(const String& path_to_project)
     initialize_debugger();
 
     create_toolbar(toolbar_container);
+
+    auto maybe_watcher = Core::FileWatcher::create();
+    if (maybe_watcher.is_error()) {
+        warnln("Couldn't create a file watcher, deleted files won't be noticed! Error: {}", maybe_watcher.error());
+    } else {
+        m_file_watcher = maybe_watcher.release_value();
+        m_file_watcher->on_change = [this](Core::FileWatcherEvent const& event) {
+            if (event.type != Core::FileWatcherEvent::Type::Deleted)
+                return;
+
+            if (event.event_path.starts_with(project().root_path())) {
+                String relative_path = LexicalPath::relative_path(event.event_path, project().root_path());
+                handle_external_file_deletion(relative_path);
+            } else {
+                handle_external_file_deletion(event.event_path);
+            }
+        };
+    }
 }
 
 void HackStudioWidget::update_actions()
@@ -224,18 +243,12 @@ bool HackStudioWidget::open_file(const String& full_filename)
         new_project_file = m_project->get_file(filename);
         m_open_files.set(filename, *new_project_file);
         m_open_files_vector.append(filename);
-        auto watcher_or_error = Core::FileWatcher::watch(filename);
-        if (!watcher_or_error.is_error()) {
-            auto& watcher = watcher_or_error.value();
-            watcher->on_change = [this, filename]() {
-                struct stat st;
-                if (lstat(filename.characters(), &st) < 0) {
-                    if (errno == ENOENT) {
-                        handle_external_file_deletion(filename);
-                    }
-                }
-            };
-            m_file_watchers.set(filename, watcher_or_error.release_value());
+
+        if (!m_file_watcher.is_null()) {
+            auto watch_result = m_file_watcher->add_watch(filename, Core::FileWatcherEvent::Type::Deleted);
+            if (watch_result.is_error()) {
+                warnln("Couldn't watch '{}'", filename);
+            }
         }
 
         m_open_files_view->model()->update();
@@ -340,7 +353,7 @@ NonnullRefPtr<GUI::Action> HackStudioWidget::create_new_file_action()
         filepath = String::formatted("{}{}", filepath, filename);
 
         auto file = Core::File::construct(filepath);
-        if (!file->open((Core::IODevice::OpenMode)(Core::IODevice::WriteOnly | Core::IODevice::MustBeNew))) {
+        if (!file->open((Core::OpenMode)(Core::OpenMode::WriteOnly | Core::OpenMode::MustBeNew))) {
             GUI::MessageBox::show(window(), String::formatted("Failed to create '{}'", filepath), "Error", GUI::MessageBox::Type::Error);
             return;
         }
@@ -350,7 +363,7 @@ NonnullRefPtr<GUI::Action> HackStudioWidget::create_new_file_action()
 
 NonnullRefPtr<GUI::Action> HackStudioWidget::create_new_directory_action()
 {
-    return GUI::Action::create("New &Directory...", { Mod_Ctrl | Mod_Shift, Key_N }, Gfx::Bitmap::load_from_file("/res/icons/16x16/mkdir.png"), [this](const GUI::Action&) {
+    return GUI::Action::create("&New Directory...", { Mod_Ctrl | Mod_Shift, Key_N }, Gfx::Bitmap::load_from_file("/res/icons/16x16/mkdir.png"), [this](const GUI::Action&) {
         String directory_name;
         if (GUI::InputBox::show(window(), directory_name, "Enter name of new directory:", "Add new folder to project") != GUI::InputBox::ExecOK)
             return;
@@ -552,7 +565,7 @@ NonnullRefPtr<GUI::Action> HackStudioWidget::create_save_action()
 
 NonnullRefPtr<GUI::Action> HackStudioWidget::create_remove_current_terminal_action()
 {
-    return GUI::Action::create("&Remove Current Terminal", { Mod_Alt | Mod_Shift, Key_T }, [this](auto&) {
+    return GUI::Action::create("Remove &Current Terminal", { Mod_Alt | Mod_Shift, Key_T }, [this](auto&) {
         auto widget = m_action_tab_widget->active_widget();
         if (!widget)
             return;
@@ -608,7 +621,7 @@ NonnullRefPtr<GUI::Action> HackStudioWidget::create_debug_action()
         }
 
         Debugger::the().set_executable_path(get_project_executable_path());
-        m_debugger_thread = LibThread::Thread::construct(Debugger::start_static);
+        m_debugger_thread = Threading::Thread::construct(Debugger::start_static);
         m_debugger_thread->start();
         m_stop_action->set_enabled(true);
     });
@@ -868,7 +881,7 @@ void HackStudioWidget::create_project_tab(GUI::Widget& parent)
     };
 }
 
-void HackStudioWidget::create_app_menubar(GUI::Menubar& menubar)
+void HackStudioWidget::create_file_menubar(GUI::Menubar& menubar)
 {
     auto& file_menu = menubar.add_menu("&File");
     file_menu.add_action(*m_new_project_action);
@@ -885,14 +898,12 @@ void HackStudioWidget::create_project_menubar(GUI::Menubar& menubar)
     auto& project_menu = menubar.add_menu("&Project");
     project_menu.add_action(*m_new_file_action);
     project_menu.add_action(*m_new_directory_action);
-    project_menu.add_separator();
-    project_menu.add_action(*create_set_autocomplete_mode_action());
 }
 
 void HackStudioWidget::create_edit_menubar(GUI::Menubar& menubar)
 {
     auto& edit_menu = menubar.add_menu("&Edit");
-    edit_menu.add_action(GUI::Action::create("Find in Files...", { Mod_Ctrl | Mod_Shift, Key_F }, Gfx::Bitmap::load_from_file("/res/icons/16x16/find.png"), [this](auto&) {
+    edit_menu.add_action(GUI::Action::create("&Find in Files...", { Mod_Ctrl | Mod_Shift, Key_F }, Gfx::Bitmap::load_from_file("/res/icons/16x16/find.png"), [this](auto&) {
         reveal_action_tab(*m_find_in_files_widget);
         m_find_in_files_widget->focus_textbox_and_select_all();
     }));
@@ -968,7 +979,7 @@ void HackStudioWidget::create_view_menubar(GUI::Menubar& menubar)
 
 void HackStudioWidget::create_help_menubar(GUI::Menubar& menubar)
 {
-    auto& help_menu = menubar.add_menu("Help");
+    auto& help_menu = menubar.add_menu("&Help");
     help_menu.add_action(GUI::CommonActions::make_about_action("Hack Studio", GUI::Icon::default_icon("app-hack-studio"), window()));
 }
 
@@ -987,18 +998,9 @@ NonnullRefPtr<GUI::Action> HackStudioWidget::create_stop_action()
     return action;
 }
 
-NonnullRefPtr<GUI::Action> HackStudioWidget::create_set_autocomplete_mode_action()
-{
-    auto action = GUI::Action::create_checkable("AutoComplete C++ with &Parser", [this](auto& action) {
-        get_language_client<LanguageClients::Cpp::ServerConnection>(project().root_path())->set_autocomplete_mode(action.is_checked() ? "Parser" : "Lexer");
-    });
-    action->set_checked(true);
-    return action;
-}
-
 void HackStudioWidget::initialize_menubar(GUI::Menubar& menubar)
 {
-    create_app_menubar(menubar);
+    create_file_menubar(menubar);
     create_project_menubar(menubar);
     create_edit_menubar(menubar);
     create_build_menubar(menubar);
@@ -1030,7 +1032,6 @@ void HackStudioWidget::handle_external_file_deletion(const String& filepath)
         }
     }
 
-    m_file_watchers.remove(filepath);
     m_open_files_view->model()->update();
 }
 

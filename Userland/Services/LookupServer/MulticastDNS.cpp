@@ -12,6 +12,7 @@
 #include <AK/JsonValue.h>
 #include <AK/String.h>
 #include <LibCore/File.h>
+#include <limits.h>
 #include <poll.h>
 #include <sys/socket.h>
 #include <unistd.h>
@@ -114,7 +115,7 @@ ssize_t MulticastDNS::emit_packet(const DNSPacket& packet, const sockaddr_in* de
 Vector<IPv4Address> MulticastDNS::local_addresses() const
 {
     auto file = Core::File::construct("/proc/net/adapters");
-    if (!file->open(Core::IODevice::ReadOnly)) {
+    if (!file->open(Core::OpenMode::ReadOnly)) {
         dbgln("Failed to open /proc/net/adapters: {}", file->error_string());
         return {};
     }
@@ -168,7 +169,7 @@ Vector<DNSAnswer> MulticastDNS::lookup(const DNSName& name, DNSRecordType record
         }
 
         auto buffer = receive(1024);
-        if (!buffer)
+        if (buffer.is_empty())
             return {};
         auto optional_packet = DNSPacket::from_raw_packet(buffer.data(), buffer.size());
         if (!optional_packet.has_value()) {

@@ -34,7 +34,7 @@ int main(int argc, char** argv)
 
     auto app = GUI::Application::construct(argc, argv);
     sleep(delay);
-    auto shared_bitmap = GUI::WindowServerConnection::the().get_screen_bitmap();
+    auto shared_bitmap = GUI::WindowServerConnection::the().get_screen_bitmap({});
 
     auto* bitmap = shared_bitmap.bitmap();
     if (!bitmap) {
@@ -53,7 +53,7 @@ int main(int argc, char** argv)
         return 1;
     }
 
-    auto file_or_error = Core::File::open(output_path, Core::IODevice::ReadWrite);
+    auto file_or_error = Core::File::open(output_path, Core::OpenMode::ReadWrite);
     if (file_or_error.is_error()) {
         warnln("Could not open '{}' for writing: {}", output_path, file_or_error.error());
         return 1;

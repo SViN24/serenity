@@ -12,6 +12,7 @@
 #include <Kernel/API/Syscall.h>
 #include <LibSystem/syscall.h>
 #include <bits/pthread_integration.h>
+#include <errno.h>
 #include <limits.h>
 #include <pthread.h>
 #include <serenity.h>
@@ -28,17 +29,22 @@ using PthreadAttrImpl = Syscall::SC_create_thread_params;
 
 } // end anonymous namespace
 
-constexpr size_t required_stack_alignment = 4 * MiB;
-constexpr size_t highest_reasonable_guard_size = 32 * PAGE_SIZE;
-constexpr size_t highest_reasonable_stack_size = 8 * MiB; // That's the default in Ubuntu?
+static constexpr size_t required_stack_alignment = 4 * MiB;
+static constexpr size_t highest_reasonable_guard_size = 32 * PAGE_SIZE;
+static constexpr size_t highest_reasonable_stack_size = 8 * MiB; // That's the default in Ubuntu?
+
+__thread void* s_stack_location;
+__thread size_t s_stack_size;
 
 #define __RETURN_PTHREAD_ERROR(rc) \
     return ((rc) < 0 ? -(rc) : 0)
 
 extern "C" {
 
-static void* pthread_create_helper(void* (*routine)(void*), void* argument)
+static void* pthread_create_helper(void* (*routine)(void*), void* argument, void* stack_location, size_t stack_size)
 {
+    s_stack_location = stack_location;
+    s_stack_size = stack_size;
     void* ret_val = routine(argument);
     pthread_exit(ret_val);
     return nullptr;
@@ -56,10 +62,12 @@ static int create_thread(pthread_t* thread, void* (*entry)(void*), void* argumen
 
     // We set up the stack for pthread_create_helper.
     // Note that we need to align the stack to 16B, accounting for
-    // the fact that we also push 8 bytes.
-    while (((uintptr_t)stack - 8) % 16 != 0)
+    // the fact that we also push 16 bytes.
+    while (((uintptr_t)stack - 16) % 16 != 0)
         push_on_stack(nullptr);
 
+    push_on_stack((void*)thread_params->m_stack_size);
+    push_on_stack(thread_params->m_stack_location);
     push_on_stack(argument);
     push_on_stack((void*)entry);
     VERIFY((uintptr_t)stack % 16 == 0);
@@ -73,10 +81,10 @@ static int create_thread(pthread_t* thread, void* (*entry)(void*), void* argumen
     __RETURN_PTHREAD_ERROR(rc);
 }
 
-[[noreturn]] static void exit_thread(void* code)
+[[noreturn]] static void exit_thread(void* code, void* stack_location, size_t stack_size)
 {
     __pthread_key_destroy_for_current_thread();
-    syscall(SC_exit_thread, code);
+    syscall(SC_exit_thread, code, stack_location, stack_size);
     VERIFY_NOT_REACHED();
 }
 
@@ -118,7 +126,7 @@ int pthread_create(pthread_t* thread, pthread_attr_t* attributes, void* (*start_
 
 void pthread_exit(void* value_ptr)
 {
-    exit_thread(value_ptr);
+    exit_thread(value_ptr, s_stack_location, s_stack_size);
 }
 
 void pthread_cleanup_push([[maybe_unused]] void (*routine)(void*), [[maybe_unused]] void* arg)
@@ -611,7 +619,7 @@ int pthread_spin_lock(pthread_spinlock_t* lock)
 int pthread_spin_trylock(pthread_spinlock_t* lock)
 {
     // We expect the current value to be unlocked, as the specification
-    // states that trylock should lock ony if it is not held by ANY thread.
+    // states that trylock should lock only if it is not held by ANY thread.
     auto current = spinlock_unlock_sentinel;
     auto desired = gettid();
 

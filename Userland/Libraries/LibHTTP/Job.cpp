@@ -7,6 +7,7 @@
 #include <AK/Debug.h>
 #include <LibCompress/Gzip.h>
 #include <LibCompress/Zlib.h>
+#include <LibCore/Event.h>
 #include <LibCore/TCPSocket.h>
 #include <LibHTTP/HttpResponse.h>
 #include <LibHTTP/Job.h>
@@ -124,12 +125,9 @@ void Job::on_socket_connected()
             return;
 
         if (m_state == State::Finished) {
-            // This is probably just a EOF notification, which means we should receive nothing
-            // and then get eof() == true.
-            [[maybe_unused]] auto payload = receive(64);
-            // These assertions are only correct if "Connection: close".
-            VERIFY(payload.is_empty());
-            VERIFY(eof());
+            // We have everything we want, at this point, we can either get an EOF, or a bunch of extra newlines
+            // (unless "Connection: close" isn't specified)
+            // So just ignore everything after this.
             return;
         }
 
@@ -138,7 +136,7 @@ void Job::on_socket_connected()
                 return;
             auto line = read_line(PAGE_SIZE);
             if (line.is_null()) {
-                fprintf(stderr, "Job: Expected HTTP status\n");
+                warnln("Job: Expected HTTP status");
                 return deferred_invoke([this](auto&) { did_fail(Core::NetworkJob::Error::TransmissionFailed); });
             }
             auto parts = line.split_view(' ');
@@ -148,7 +146,7 @@ void Job::on_socket_connected()
             }
             auto code = parts[1].to_uint();
             if (!code.has_value()) {
-                fprintf(stderr, "Job: Expected numeric HTTP status\n");
+                warnln("Job: Expected numeric HTTP status");
                 return deferred_invoke([this](auto&) { did_fail(Core::NetworkJob::Error::ProtocolFailed); });
             }
             m_code = code.value();
@@ -166,7 +164,7 @@ void Job::on_socket_connected()
                     // that is not a valid trailing header.
                     return finish_up();
                 }
-                fprintf(stderr, "Job: Expected HTTP header\n");
+                warnln("Job: Expected HTTP header");
                 return did_fail(Core::NetworkJob::Error::ProtocolFailed);
             }
             if (line.is_empty()) {
@@ -187,7 +185,7 @@ void Job::on_socket_connected()
                     // that is not a valid trailing header.
                     return finish_up();
                 }
-                fprintf(stderr, "Job: Expected HTTP header with key/value\n");
+                warnln("Job: Expected HTTP header with key/value");
                 return deferred_invoke([this](auto&) { did_fail(Core::NetworkJob::Error::ProtocolFailed); });
             }
             auto name = parts[0];
@@ -282,7 +280,7 @@ void Job::on_socket_connected()
             }
 
             auto payload = receive(read_size);
-            if (!payload) {
+            if (payload.is_empty()) {
                 if (eof()) {
                     finish_up();
                     return IterationDecision::Break;
@@ -352,6 +350,14 @@ void Job::on_socket_connected()
     });
 }
 
+void Job::timer_event(Core::TimerEvent& event)
+{
+    event.accept();
+    finish_up();
+    if (m_buffered_size == 0)
+        stop_timer();
+}
+
 void Job::finish_up()
 {
     m_state = State::Finished;
@@ -382,9 +388,9 @@ void Job::finish_up()
         // before we can actually call `did_finish`. in a normal flow, this should
         // never be hit since the client is reading as we are writing, unless there
         // are too many concurrent downloads going on.
-        deferred_invoke([this](auto&) {
-            finish_up();
-        });
+        dbgln_if(JOB_DEBUG, "Flush finished with {} bytes remaining, will try again later", m_buffered_size);
+        if (!has_timer())
+            start_timer(50);
         return;
     }
 

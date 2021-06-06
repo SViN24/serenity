@@ -6,6 +6,7 @@
  * SPDX-License-Identifier: BSD-2-Clause
  */
 
+#include <AK/CharacterTypes.h>
 #include <AK/StringBuilder.h>
 #include <AK/Utf8View.h>
 #include <LibCore/Timer.h>
@@ -50,10 +51,9 @@
 #include <LibWeb/Layout/TreeBuilder.h>
 #include <LibWeb/Namespace.h>
 #include <LibWeb/Origin.h>
-#include <LibWeb/Page/Frame.h>
+#include <LibWeb/Page/BrowsingContext.h>
 #include <LibWeb/SVG/TagNames.h>
 #include <LibWeb/UIEvents/MouseEvent.h>
-#include <ctype.h>
 
 namespace Web::DOM {
 
@@ -253,7 +253,7 @@ String Document::title() const
     StringBuilder builder;
     bool last_was_space = false;
     for (auto code_point : Utf8View(raw_title)) {
-        if (isspace(code_point)) {
+        if (is_ascii_space(code_point)) {
             last_was_space = true;
         } else {
             if (last_was_space && !builder.is_empty())
@@ -281,22 +281,22 @@ void Document::set_title(const String& title)
     title_element->append_child(adopt_ref(*new Text(*this, title)));
 
     if (auto* page = this->page()) {
-        if (frame() == &page->main_frame())
+        if (browsing_context() == &page->top_level_browsing_context())
             page->client().page_did_change_title(title);
     }
 }
 
-void Document::attach_to_frame(Badge<Frame>, Frame& frame)
+void Document::attach_to_browsing_context(Badge<BrowsingContext>, BrowsingContext& browsing_context)
 {
-    m_frame = frame;
+    m_browsing_context = browsing_context;
     update_layout();
 }
 
-void Document::detach_from_frame(Badge<Frame>, Frame& frame)
+void Document::detach_from_browsing_context(Badge<BrowsingContext>, BrowsingContext& browsing_context)
 {
-    VERIFY(&frame == m_frame);
+    VERIFY(&browsing_context == m_browsing_context);
     tear_down_layout_tree();
-    m_frame = nullptr;
+    m_browsing_context = nullptr;
 }
 
 void Document::tear_down_layout_tree()
@@ -399,7 +399,7 @@ void Document::force_layout()
 
 void Document::update_layout()
 {
-    if (!frame())
+    if (!browsing_context())
         return;
 
     if (!m_layout_root) {
@@ -412,7 +412,7 @@ void Document::update_layout()
 
     m_layout_root->set_needs_display();
 
-    if (frame()->is_main_frame()) {
+    if (browsing_context()->is_top_level()) {
         if (auto* page = this->page())
             page->client().page_did_layout();
     }
@@ -525,7 +525,7 @@ NonnullRefPtr<HTMLCollection> Document::applets()
 {
     // FIXME: This should return the same HTMLCollection object every time,
     //        but that would cause a reference cycle since HTMLCollection refs the root.
-    return HTMLCollection::create(*this, [] { return false; });
+    return HTMLCollection::create(*this, [](auto&) { return false; });
 }
 
 // https://html.spec.whatwg.org/multipage/obsolete.html#dom-document-anchors
@@ -828,10 +828,10 @@ void Document::adopt_node(Node& node)
 ExceptionOr<NonnullRefPtr<Node>> Document::adopt_node_binding(NonnullRefPtr<Node> node)
 {
     if (is<Document>(*node))
-        return DOM ::NotSupportedError::create("Cannot adopt_ref a document into a document");
+        return DOM::NotSupportedError::create("Cannot adopt a document into a document");
 
     if (is<ShadowRoot>(*node))
-        return DOM::HierarchyRequestError::create("Cannot adopt_ref a shadow root into a document");
+        return DOM::HierarchyRequestError::create("Cannot adopt a shadow root into a document");
 
     if (is<DocumentFragment>(*node) && downcast<DocumentFragment>(*node).host())
         return node;
@@ -881,12 +881,12 @@ void Document::set_ready_state(const String& ready_state)
 
 Page* Document::page()
 {
-    return m_frame ? m_frame->page() : nullptr;
+    return m_browsing_context ? m_browsing_context->page() : nullptr;
 }
 
 const Page* Document::page() const
 {
-    return m_frame ? m_frame->page() : nullptr;
+    return m_browsing_context ? m_browsing_context->page() : nullptr;
 }
 
 EventTarget* Document::get_parent(const Event& event)

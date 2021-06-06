@@ -89,18 +89,18 @@ CSVExportDialogPage::CSVExportDialogPage(const Sheet& sheet)
     m_delimiter_tab_radio->on_checked = [&](auto) { update_preview(); };
     m_delimiter_space_radio->on_checked = [&](auto) { update_preview(); };
     m_delimiter_other_radio->on_checked = [&](auto) { update_preview(); };
-    m_delimiter_other_text_box->on_change = [&](auto&) {
+    m_delimiter_other_text_box->on_change = [&] {
         if (m_delimiter_other_radio->is_checked())
             update_preview();
     };
     m_quote_single_radio->on_checked = [&](auto) { update_preview(); };
     m_quote_double_radio->on_checked = [&](auto) { update_preview(); };
     m_quote_other_radio->on_checked = [&](auto) { update_preview(); };
-    m_quote_other_text_box->on_change = [&](auto&) {
+    m_quote_other_text_box->on_change = [&] {
         if (m_quote_other_radio->is_checked())
             update_preview();
     };
-    m_quote_escape_combo_box->on_change = [&](auto&) { update_preview(); };
+    m_quote_escape_combo_box->on_change = [&](auto&, auto&) { update_preview(); };
     m_export_header_check_box->on_checked = [&](auto) { update_preview(); };
     m_quote_all_fields_check_box->on_checked = [&](auto) { update_preview(); };
 
@@ -198,7 +198,7 @@ void CSVExportDialogPage::update_preview()
 
     auto file_or_error = Core::File::open(
         m_temp_output_file_path,
-        Core::IODevice::ReadOnly);
+        Core::OpenMode::ReadOnly);
     if (file_or_error.is_error())
         goto fail;
 

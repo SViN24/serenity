@@ -150,8 +150,17 @@ public:
         return false;
     }
 
-    // NOTE: Vector::is_null() exists for the benefit of String::copy().
-    bool is_null() const { return false; }
+    bool contains_in_range(const T& value, const size_t start, const size_t end) const
+    {
+        VERIFY(start <= end);
+        VERIFY(end < size());
+        for (size_t i = start; i <= end; ++i) {
+            if (Traits<T>::equals(at(i), value))
+                return true;
+        }
+        return false;
+    }
+
     bool is_empty() const { return size() == 0; }
     ALWAYS_INLINE size_t size() const { return m_size; }
     size_t capacity() const { return m_capacity; }
@@ -563,7 +572,7 @@ public:
     {
         if (m_capacity >= needed_capacity)
             return true;
-        size_t new_capacity = needed_capacity;
+        size_t new_capacity = kmalloc_good_size(needed_capacity * sizeof(T)) / sizeof(T);
         auto* new_buffer = (T*)kmalloc(new_capacity * sizeof(T));
         if (new_buffer == nullptr)
             return false;
@@ -619,7 +628,7 @@ public:
             return false;
 
         for (size_t i = size(); i < new_size; ++i)
-            new (slot(i)) T;
+            new (slot(i)) T {};
         m_size = new_size;
         return true;
     }
@@ -672,7 +681,7 @@ public:
         return AK::find(begin(), end(), value);
     }
 
-    Optional<size_t> find_first_index(const T& value)
+    Optional<size_t> find_first_index(const T& value) const
     {
         if (const auto index = AK::find_index(begin(), end(), value);
             index < size()) {

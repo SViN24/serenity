@@ -5,7 +5,9 @@
  */
 
 #include <AK/LexicalPath.h>
+#include <AK/Random.h>
 #include <LibCore/ArgsParser.h>
+#include <errno.h>
 #include <fcntl.h>
 #include <stdio.h>
 #include <string.h>
@@ -19,11 +21,11 @@ static char* generate_random_filename(const char* pattern)
     char* new_filename = strdup(pattern);
     int pattern_length = strlen(pattern);
 
-    static constexpr char random_characters[] = "abcdefghijklmnopqrstuvwxyz0123456789";
+    constexpr char random_characters[] = "abcdefghijklmnopqrstuvwxyz0123456789";
     for (auto i = pattern_length - 1; i >= 0; --i) {
         if (pattern[i] != 'X')
             break;
-        new_filename[i] = random_characters[(arc4random() % (sizeof(random_characters) - 1))];
+        new_filename[i] = random_characters[(get_random<u32>() % (sizeof(random_characters) - 1))];
     }
 
     return new_filename;

@@ -1,4 +1,9 @@
-add_compile_options(-Os)
+if (ENABLE_EXTRA_KERNEL_DEBUG_SYMBOLS)
+    add_compile_options(-Og)
+    add_compile_options(-ggdb3)
+else()
+    add_compile_options(-Os)
+endif()
 
 if ("${SERENITY_ARCH}" STREQUAL "i686")
     set(KERNEL_ARCH i386)
@@ -23,18 +28,17 @@ set(KERNEL_SOURCES
     Arch/x86/SmapDisabler.h
     CMOS.cpp
     CommandLine.cpp
-    Console.cpp
+    ConsoleDevice.cpp
     CoreDump.cpp
     DMI.cpp
     Devices/AsyncDeviceRequest.cpp
-    Devices/BXVGADevice.cpp
     Devices/BlockDevice.cpp
     Devices/CharacterDevice.cpp
     Devices/Device.cpp
     Devices/FullDevice.cpp
-    Devices/MBVGADevice.cpp
     Devices/MemoryDevice.cpp
     Devices/NullDevice.cpp
+    Devices/PCISerialDevice.cpp
     Devices/PCSpeaker.cpp
     Devices/RandomDevice.cpp
     Devices/SB16.cpp
@@ -52,6 +56,14 @@ set(KERNEL_SOURCES
     Devices/HID/PS2KeyboardDevice.cpp
     Devices/HID/PS2MouseDevice.cpp
     Devices/HID/VMWareMouseDevice.cpp
+    Graphics/Console/FramebufferConsole.cpp
+    Graphics/Console/TextModeConsole.cpp
+    Graphics/Console/VGAConsole.cpp
+    Graphics/BochsGraphicsAdapter.cpp
+    Graphics/FramebufferDevice.cpp
+    Graphics/GraphicsManagement.cpp
+    Graphics/IntelNativeGraphicsAdapter.cpp
+    Graphics/VGACompatibleAdapter.cpp
     Storage/Partition/DiskPartition.cpp
     Storage/Partition/DiskPartitionMetadata.cpp
     Storage/Partition/EBRPartitionTable.cpp
@@ -100,6 +112,7 @@ set(KERNEL_SOURCES
     Interrupts/SpuriousInterruptHandler.cpp
     Interrupts/UnhandledInterruptHandler.cpp
     KBufferBuilder.cpp
+    KString.cpp
     KSyms.cpp
     Lock.cpp
     Net/E1000NetworkAdapter.cpp
@@ -187,6 +200,7 @@ set(KERNEL_SOURCES
     Syscalls/sigaction.cpp
     Syscalls/socket.cpp
     Syscalls/stat.cpp
+    Syscalls/statvfs.cpp
     Syscalls/sync.cpp
     Syscalls/sysconf.cpp
     Syscalls/thread.cpp
@@ -198,8 +212,9 @@ set(KERNEL_SOURCES
     Syscalls/unveil.cpp
     Syscalls/utime.cpp
     Syscalls/waitid.cpp
-    Syscalls/watch_file.cpp
+    Syscalls/inode_watcher.cpp
     Syscalls/write.cpp
+    TTY/ConsoleManagement.cpp
     TTY/MasterPTY.cpp
     TTY/PTYMultiplexer.cpp
     TTY/SlavePTY.cpp
@@ -236,6 +251,7 @@ set(KERNEL_SOURCES
     VM/Range.cpp
     VM/RangeAllocator.cpp
     VM/Region.cpp
+    VM/RingBuffer.cpp
     VM/ScatterGatherList.cpp
     VM/SharedInodeVMObject.cpp
     VM/Space.cpp
@@ -255,7 +271,6 @@ set(KERNEL_SOURCES
 )
 
 set(AK_SOURCES
-    ../AK/ByteBuffer.cpp
     ../AK/FlyString.cpp
     ../AK/GenericLexer.cpp
     ../AK/Hex.cpp
@@ -277,9 +292,12 @@ set(ELF_SOURCES
     ../Userland/Libraries/LibELF/Validation.cpp
 )
 
+generate_state_machine(../Userland/Libraries/LibVT/StateMachine.txt ../Userland/Libraries/LibVT/EscapeSequenceStateMachine.h)
+
 set(VT_SOURCES
     ../Userland/Libraries/LibVT/Terminal.cpp
     ../Userland/Libraries/LibVT/Line.cpp
+    ../Userland/Libraries/LibVT/EscapeSequenceParser.cpp
 )
 
 set(KEYBOARD_SOURCES
@@ -352,7 +370,7 @@ if (${CMAKE_HOST_SYSTEM_NAME} MATCHES SerenityOS)
     include_directories(/usr/local/include/c++/${GCC_VERSION}/)
 else()
     if (NOT EXISTS ${TOOLCHAIN_ROOT}/Kernel/${SERENITY_ARCH}-pc-serenity/include/c++/${GCC_VERSION}/)
-        message(SEND_ERROR "Toolchain version ${GCC_VERSION} appears to be missing! Please run: Meta/serenity.sh rebuild-toolchain")
+        message(FATAL_ERROR "Toolchain version ${GCC_VERSION} appears to be missing! Please run: Meta/serenity.sh rebuild-toolchain")
     endif()
     include_directories(${TOOLCHAIN_ROOT}/Kernel/${SERENITY_ARCH}-pc-serenity/include/c++/${GCC_VERSION}/)
     include_directories(${TOOLCHAIN_ROOT}/Kernel/${SERENITY_ARCH}-pc-serenity/include/c++/${GCC_VERSION}/${SERENITY_ARCH}-pc-serenity/)
@@ -361,6 +379,8 @@ else()
 endif()
 
 add_executable(Kernel ${SOURCES})
+add_dependencies(Kernel generate_EscapeSequenceStateMachine.h)
+
 if (ENABLE_KERNEL_LTO)
     include(CheckIPOSupported)
     check_ipo_supported()
@@ -369,7 +389,6 @@ endif()
 target_link_libraries(Kernel kernel_heap gcc stdc++)
 add_dependencies(Kernel boot kernel_heap)
 install(TARGETS Kernel RUNTIME DESTINATION boot)
-serenity_add_ak_precompiled_headers_to_target(Kernel)
 
 add_custom_command(
     TARGET Kernel

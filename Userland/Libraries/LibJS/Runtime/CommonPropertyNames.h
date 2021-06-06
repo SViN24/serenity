@@ -24,7 +24,9 @@ namespace JS {
     P(LOG10E)                                \
     P(LOG2E)                                 \
     P(MAX_SAFE_INTEGER)                      \
+    P(MAX_VALUE)                             \
     P(MIN_SAFE_INTEGER)                      \
+    P(MIN_VALUE)                             \
     P(Math)                                  \
     P(NEGATIVE_INFINITY)                     \
     P(NaN)                                   \
@@ -44,6 +46,7 @@ namespace JS {
     P(acosh)                                 \
     P(all)                                   \
     P(allSettled)                            \
+    P(anchor)                                \
     P(any)                                   \
     P(apply)                                 \
     P(arguments)                             \
@@ -56,8 +59,13 @@ namespace JS {
     P(atan)                                  \
     P(atan2)                                 \
     P(atanh)                                 \
+    P(big)                                   \
     P(bind)                                  \
+    P(blink)                                 \
+    P(bold)                                  \
+    P(buffer)                                \
     P(byteLength)                            \
+    P(byteOffset)                            \
     P(call)                                  \
     P(callee)                                \
     P(cbrt)                                  \
@@ -91,6 +99,7 @@ namespace JS {
     P(entries)                               \
     P(enumerable)                            \
     P(error)                                 \
+    P(escape)                                \
     P(eval)                                  \
     P(every)                                 \
     P(exec)                                  \
@@ -101,9 +110,12 @@ namespace JS {
     P(finally)                               \
     P(find)                                  \
     P(findIndex)                             \
+    P(fixed)                                 \
     P(flags)                                 \
     P(flat)                                  \
     P(floor)                                 \
+    P(fontcolor)                             \
+    P(fontsize)                              \
     P(forEach)                               \
     P(freeze)                                \
     P(from)                                  \
@@ -131,10 +143,12 @@ namespace JS {
     P(getUTCMinutes)                         \
     P(getUTCMonth)                           \
     P(getUTCSeconds)                         \
+    P(getYear)                               \
     P(global)                                \
     P(globalThis)                            \
     P(groups)                                \
     P(has)                                   \
+    P(hasOwn)                                \
     P(hasOwnProperty)                        \
     P(hypot)                                 \
     P(ignoreCase)                            \
@@ -155,12 +169,14 @@ namespace JS {
     P(isSafeInteger)                         \
     P(isSealed)                              \
     P(isView)                                \
+    P(italics)                               \
     P(join)                                  \
     P(keyFor)                                \
     P(keys)                                  \
     P(lastIndex)                             \
     P(lastIndexOf)                           \
     P(length)                                \
+    P(link)                                  \
     P(log)                                   \
     P(log1p)                                 \
     P(log2)                                  \
@@ -204,11 +220,13 @@ namespace JS {
     P(setMinutes)                            \
     P(setPrototypeOf)                        \
     P(setSeconds)                            \
+    P(setYear)                               \
     P(shift)                                 \
     P(sign)                                  \
     P(sin)                                   \
     P(sinh)                                  \
     P(slice)                                 \
+    P(small)                                 \
     P(some)                                  \
     P(sort)                                  \
     P(source)                                \
@@ -216,9 +234,12 @@ namespace JS {
     P(sqrt)                                  \
     P(startsWith)                            \
     P(sticky)                                \
+    P(strike)                                \
     P(stringify)                             \
+    P(sub)                                   \
     P(substr)                                \
     P(substring)                             \
+    P(sup)                                   \
     P(tan)                                   \
     P(tanh)                                  \
     P(test)                                  \
@@ -238,9 +259,12 @@ namespace JS {
     P(trace)                                 \
     P(trim)                                  \
     P(trimEnd)                               \
+    P(trimLeft)                              \
+    P(trimRight)                             \
     P(trimStart)                             \
     P(trunc)                                 \
     P(undefined)                             \
+    P(unescape)                              \
     P(unicode)                               \
     P(unshift)                               \
     P(value)                                 \

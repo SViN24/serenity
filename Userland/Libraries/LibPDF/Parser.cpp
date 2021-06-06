@@ -6,8 +6,11 @@
 
 #include <AK/ScopeGuard.h>
 #include <AK/TypeCasts.h>
+#include <LibPDF/CommonNames.h>
 #include <LibPDF/Document.h>
+#include <LibPDF/Filter.h>
 #include <LibPDF/Parser.h>
+#include <LibTextCodec/Decoder.h>
 #include <ctype.h>
 #include <math.h>
 
@@ -19,7 +22,18 @@ static NonnullRefPtr<T> make_object(Args... args) requires(IsBaseOf<Object, T>)
     return adopt_ref(*new T(forward<Args>(args)...));
 }
 
+Vector<Command> Parser::parse_graphics_commands(const ReadonlyBytes& bytes)
+{
+    Parser parser(bytes);
+    return parser.parse_graphics_commands();
+}
+
 Parser::Parser(Badge<Document>, const ReadonlyBytes& bytes)
+    : m_reader(bytes)
+{
+}
+
+Parser::Parser(const ReadonlyBytes& bytes)
     : m_reader(bytes)
 {
 }
@@ -238,7 +252,7 @@ String Parser::parse_comment()
 
     consume();
     auto comment_start_offset = m_reader.offset();
-    m_reader.move_until([&] {
+    m_reader.move_until([&](auto) {
         return matches_eol();
     });
     String str = StringView(m_reader.bytes().slice(comment_start_offset, m_reader.offset() - comment_start_offset));
@@ -309,7 +323,7 @@ Value Parser::parse_possible_indirect_value_or_ref()
         m_reader.discard();
         consume();
         consume_whitespace();
-        return make_object<IndirectValueRef>(first_number.as_int(), second_number.as_int());
+        return Value(first_number.as_int(), second_number.as_int());
     }
 
     if (m_reader.matches("obj")) {
@@ -328,10 +342,9 @@ NonnullRefPtr<IndirectValue> Parser::parse_indirect_value(int index, int generat
     if (matches_eol())
         consume_eol();
     auto value = parse_value();
-    VERIFY(value.is_object());
     VERIFY(m_reader.matches("endobj"));
 
-    return make_object<IndirectValue>(index, generation, value.as_object());
+    return make_object<IndirectValue>(index, generation, value);
 }
 
 NonnullRefPtr<IndirectValue> Parser::parse_indirect_value()
@@ -411,9 +424,27 @@ NonnullRefPtr<StringObject> Parser::parse_string()
 {
     ScopeGuard guard([&] { consume_whitespace(); });
 
-    if (m_reader.matches('('))
-        return make_object<StringObject>(parse_literal_string(), false);
-    return make_object<StringObject>(parse_hex_string(), true);
+    String string;
+    bool is_binary_string;
+
+    if (m_reader.matches('(')) {
+        string = parse_literal_string();
+        is_binary_string = false;
+    } else {
+        string = parse_hex_string();
+        is_binary_string = true;
+    }
+
+    if (string.bytes().starts_with(Array<u8, 2> { 0xfe, 0xff })) {
+        // The string is encoded in UTF16-BE
+        string = TextCodec::decoder_for("utf-16be")->to_utf8(string.substring(2));
+    } else if (string.bytes().starts_with(Array<u8, 3> { 239, 187, 191 })) {
+        // The string is encoded in UTF-8. This is the default anyways, but if these bytes
+        // are explicitly included, we have to trim them
+        string = string.substring(3);
+    }
+
+    return make_object<StringObject>(string, is_binary_string);
 }
 
 String Parser::parse_literal_string()
@@ -586,19 +617,19 @@ RefPtr<DictObject> Parser::conditionally_parse_page_tree_node_at_offset(size_t o
             break;
         auto name = parse_name();
         auto name_string = name->name();
-        if (!name_string.is_one_of("Type", "Parent", "Kids", "Count")) {
+        if (!name_string.is_one_of(CommonNames::Type, CommonNames::Parent, CommonNames::Kids, CommonNames::Count)) {
             // This is a page, not a page tree node
             return {};
         }
         auto value = parse_value();
-        if (name_string == "Type") {
+        if (name_string == CommonNames::Type) {
             if (!value.is_object())
                 return {};
             auto type_object = value.as_object();
             if (!type_object->is_name())
                 return {};
             auto type_name = object_cast<NameObject>(type_object);
-            if (type_name->name() != "Pages")
+            if (type_name->name() != CommonNames::Pages)
                 return {};
         }
         map.set(name->name(), value);
@@ -617,14 +648,80 @@ NonnullRefPtr<StreamObject> Parser::parse_stream(NonnullRefPtr<DictObject> dict)
     m_reader.move_by(6);
     consume_eol();
 
-    auto length_value = dict->map().get("Length");
-    VERIFY(length_value.has_value());
-    auto length = length_value.value();
-    VERIFY(length.is_int());
+    ReadonlyBytes bytes;
 
-    auto bytes = m_reader.bytes().slice(m_reader.offset(), length.as_int());
+    auto maybe_length = dict->get(CommonNames::Length);
+    if (maybe_length.has_value()) {
+        // The PDF writer has kindly provided us with the direct length of the stream
+        m_reader.save();
+        auto length = m_document->resolve_to<int>(maybe_length.value());
+        m_reader.load();
+        bytes = m_reader.bytes().slice(m_reader.offset(), length);
+        m_reader.move_by(length);
+        consume_whitespace();
+    } else {
+        // We have to look for the endstream keyword
+        auto stream_start = m_reader.offset();
 
-    return make_object<StreamObject>(dict, bytes);
+        while (true) {
+            m_reader.move_until([&](auto) { return matches_eol(); });
+            auto potential_stream_end = m_reader.offset();
+            consume_eol();
+            if (!m_reader.matches("endstream"))
+                continue;
+
+            bytes = m_reader.bytes().slice(stream_start, potential_stream_end - stream_start);
+            break;
+        }
+    }
+
+    m_reader.move_by(9);
+    consume_whitespace();
+
+    if (dict->contains(CommonNames::Filter)) {
+        auto filter_type = dict->get_name(m_document, CommonNames::Filter)->name();
+        auto maybe_bytes = Filter::decode(bytes, filter_type);
+        // FIXME: Handle error condition
+        VERIFY(maybe_bytes.has_value());
+        return make_object<EncodedStreamObject>(dict, move(maybe_bytes.value()));
+    }
+
+    return make_object<PlainTextStreamObject>(dict, bytes);
+}
+
+Vector<Command> Parser::parse_graphics_commands()
+{
+    Vector<Command> commands;
+    Vector<Value> command_args;
+
+    constexpr static auto is_command_char = [](char ch) {
+        return isalpha(ch) || ch == '*' || ch == '\'';
+    };
+
+    while (!m_reader.done()) {
+        auto ch = m_reader.peek();
+        if (is_command_char(ch)) {
+            auto command_start = m_reader.offset();
+            while (is_command_char(ch)) {
+                consume();
+                if (m_reader.done())
+                    break;
+                ch = m_reader.peek();
+            }
+
+            auto command_string = StringView(m_reader.bytes().slice(command_start, m_reader.offset() - command_start));
+            auto command_type = Command::command_type_from_symbol(command_string);
+            commands.append(Command(command_type, move(command_args)));
+            command_args = Vector<Value>();
+            consume_whitespace();
+
+            continue;
+        }
+
+        command_args.append(parse_value());
+    }
+
+    return commands;
 }
 
 bool Parser::matches_eol() const

@@ -1,5 +1,6 @@
 /*
  * Copyright (c) 2020-2021, Andreas Kling <kling@serenityos.org>
+ * Copyright (c) 2021, sin-ack <sin-ack@protonmail.com>
  *
  * SPDX-License-Identifier: BSD-2-Clause
  */
@@ -136,7 +137,7 @@ private:
     int virt$getpeername(FlatPtr);
     int virt$select(FlatPtr);
     int virt$get_stack_bounds(FlatPtr, FlatPtr);
-    int virt$accept(int sockfd, FlatPtr address, FlatPtr address_length);
+    int virt$accept4(FlatPtr);
     int virt$bind(int sockfd, FlatPtr address, socklen_t address_length);
     int virt$recvmsg(int sockfd, FlatPtr msg_addr, int flags);
     int virt$sendmsg(int sockfd, FlatPtr msg_addr, int flags);
@@ -158,7 +159,9 @@ private:
     int virt$sched_getparam(pid_t, FlatPtr);
     int virt$set_thread_name(pid_t, FlatPtr, size_t);
     pid_t virt$setsid();
-    int virt$watch_file(FlatPtr, size_t);
+    int virt$create_inode_watcher(unsigned);
+    int virt$inode_watcher_add_watch(FlatPtr);
+    int virt$inode_watcher_remove_watch(int, int);
     int virt$readlink(FlatPtr);
     u32 virt$allocate_tls(FlatPtr, size_t);
     int virt$ptsname(int fd, FlatPtr buffer, size_t buffer_size);

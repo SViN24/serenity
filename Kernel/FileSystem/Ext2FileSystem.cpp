@@ -1,5 +1,6 @@
 /*
  * Copyright (c) 2018-2020, Andreas Kling <kling@serenityos.org>
+ * Copyright (c) 2021, sin-ack <sin-ack@protonmail.com>
  *
  * SPDX-License-Identifier: BSD-2-Clause
  */
@@ -19,9 +20,8 @@
 
 namespace Kernel {
 
-static const size_t max_link_count = 65535;
-static const size_t max_block_size = 4096;
-static const ssize_t max_inline_symlink_length = 60;
+static constexpr size_t max_block_size = 4096;
+static constexpr ssize_t max_inline_symlink_length = 60;
 
 struct Ext2FSDirectoryEntry {
     String name;
@@ -113,6 +113,7 @@ bool Ext2FS::initialize()
     }
 
     set_block_size(EXT2_BLOCK_SIZE(&super_block));
+    set_fragment_size(EXT2_FRAG_SIZE(&super_block));
 
     VERIFY(block_size() <= (int)max_block_size);
 
@@ -1033,6 +1034,8 @@ KResultOr<ssize_t> Ext2FSInode::write_bytes(off_t offset, ssize_t count, const U
         nwritten += num_bytes_to_copy;
     }
 
+    did_modify_contents();
+
     dbgln_if(EXT2_VERY_DEBUG, "Ext2FSInode[{}]::write_bytes(): After write, i_size={}, i_blocks={} ({} blocks in list)", identifier(), size(), m_raw_inode.i_blocks, m_block_list.size());
     return nwritten;
 }
@@ -1208,7 +1211,7 @@ KResult Ext2FSInode::add_child(Inode& child, const StringView& name, mode_t mode
         return result;
 
     m_lookup_cache.set(name, child.index());
-    did_add_child(child.identifier());
+    did_add_child(child.identifier(), name);
     return KSuccess;
 }
 
@@ -1245,7 +1248,7 @@ KResult Ext2FSInode::remove_child(const StringView& name)
     if (result.is_error())
         return result;
 
-    did_remove_child(child_id);
+    did_remove_child(child_id, name);
     return KSuccess;
 }
 
@@ -1492,7 +1495,10 @@ KResultOr<Ext2FS::CachedBitmap*> Ext2FS::get_bitmap_block(BlockIndex bitmap_bloc
         dbgln("Ext2FS: Failed to load bitmap block {}", bitmap_block_index);
         return result;
     }
-    if (!m_cached_bitmaps.try_append(make<CachedBitmap>(bitmap_block_index, move(block))))
+    auto new_bitmap = adopt_own_if_nonnull(new CachedBitmap(bitmap_block_index, move(block)));
+    if (!new_bitmap)
+        return ENOMEM;
+    if (!m_cached_bitmaps.try_append(move(new_bitmap)))
         return ENOMEM;
     return m_cached_bitmaps.last();
 }
@@ -1661,6 +1667,7 @@ KResult Ext2FSInode::increment_link_count()
     Locker locker(m_lock);
     if (fs().is_readonly())
         return EROFS;
+    constexpr size_t max_link_count = 65535;
     if (m_raw_inode.i_links_count == max_link_count)
         return EMLINK;
     ++m_raw_inode.i_links_count;
@@ -1674,10 +1681,15 @@ KResult Ext2FSInode::decrement_link_count()
     if (fs().is_readonly())
         return EROFS;
     VERIFY(m_raw_inode.i_links_count);
+
     --m_raw_inode.i_links_count;
+    set_metadata_dirty(true);
+    if (m_raw_inode.i_links_count == 0)
+        did_delete_self();
+
     if (ref_count() == 1 && m_raw_inode.i_links_count == 0)
         fs().uncache_inode(index());
-    set_metadata_dirty(true);
+
     return KSuccess;
 }
 

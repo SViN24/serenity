@@ -222,10 +222,10 @@ public:
         return *m_value.as_symbol;
     }
 
-    Cell* as_cell()
+    Cell& as_cell()
     {
         VERIFY(is_cell());
-        return m_value.as_cell;
+        return *m_value.as_cell;
     }
 
     Accessor& as_accessor()
@@ -260,6 +260,7 @@ public:
     Value to_number(GlobalObject&) const;
     BigInt* to_bigint(GlobalObject&) const;
     double to_double(GlobalObject&) const;
+    StringOrSymbol to_property_key(GlobalObject&) const;
     i32 to_i32(GlobalObject& global_object) const
     {
         if (m_type == Type::Int32)
@@ -325,6 +326,12 @@ inline Value js_infinity()
 inline Value js_negative_infinity()
 {
     return Value(-INFINITY);
+}
+
+inline void Cell::Visitor::visit(Value value)
+{
+    if (value.is_cell())
+        visit_impl(value.as_cell());
 }
 
 Value greater_than(GlobalObject&, Value lhs, Value rhs);

@@ -41,13 +41,23 @@ KResultOr<NonnullRefPtr<Thread>> Thread::try_create(NonnullRefPtr<Process> proce
     if (!kernel_stack_region)
         return ENOMEM;
     kernel_stack_region->set_stack(true);
-    return adopt_ref(*new Thread(move(process), kernel_stack_region.release_nonnull()));
+
+    auto block_timer = adopt_ref_if_nonnull(new Timer());
+    if (!block_timer)
+        return ENOMEM;
+
+    auto thread = adopt_ref_if_nonnull(new Thread(move(process), kernel_stack_region.release_nonnull(), block_timer.release_nonnull()));
+    if (!thread)
+        return ENOMEM;
+
+    return thread.release_nonnull();
 }
 
-Thread::Thread(NonnullRefPtr<Process> process, NonnullOwnPtr<Region> kernel_stack_region)
+Thread::Thread(NonnullRefPtr<Process> process, NonnullOwnPtr<Region> kernel_stack_region, NonnullRefPtr<Timer> block_timer)
     : m_process(move(process))
     , m_kernel_stack_region(move(kernel_stack_region))
     , m_name(m_process->name())
+    , m_block_timer(block_timer)
 {
     bool is_first_thread = m_process->add_thread(*this);
     if (is_first_thread) {
@@ -57,7 +67,11 @@ Thread::Thread(NonnullRefPtr<Process> process, NonnullOwnPtr<Region> kernel_stac
         m_tid = Process::allocate_pid().value();
     }
 
-    m_kernel_stack_region->set_name(String::formatted("Kernel stack (thread {})", m_tid.value()));
+    {
+        // FIXME: Go directly to KString
+        auto string = String::formatted("Kernel stack (thread {})", m_tid.value());
+        m_kernel_stack_region->set_name(KString::try_create(string));
+    }
 
     {
         ScopedSpinLock lock(g_tid_map_lock);
@@ -227,6 +241,16 @@ void Thread::die_if_needed()
     u32 unlock_count;
     [[maybe_unused]] auto rc = unlock_process_if_locked(unlock_count);
 
+    dbgln_if(THREAD_DEBUG, "Thread {} is dying", *this);
+
+    {
+        ScopedSpinLock lock(g_scheduler_lock);
+        // It's possible that we don't reach the code after this block if the
+        // scheduler is invoked and FinalizerTask cleans up this thread, however
+        // that doesn't matter because we're trying to invoke the scheduler anyway
+        set_state(Thread::Dying);
+    }
+
     ScopedCritical critical;
 
     // Flag a context switch. Because we're in a critical section,
@@ -252,6 +276,12 @@ void Thread::exit(void* exit_value)
     set_should_die();
     u32 unlock_count;
     [[maybe_unused]] auto rc = unlock_process_if_locked(unlock_count);
+    if (m_thread_specific_range.has_value()) {
+        auto* region = process().space().find_region_from_range(m_thread_specific_range.value());
+        VERIFY(region);
+        if (!process().space().deallocate_region(*region))
+            dbgln("Failed to unmap TLS range, exiting thread anyway.");
+    }
     die_if_needed();
 }
 
@@ -296,6 +326,8 @@ LockMode Thread::unlock_process_if_locked(u32& lock_count_to_restore)
 
 void Thread::relock_process(LockMode previous_locked, u32 lock_count_to_restore)
 {
+    VERIFY(state() == Thread::Running);
+
     // Clearing the critical section may trigger the context switch
     // flagged by calling Scheduler::donate_to or Scheduler::yield
     // above. We have to do it this way because we intentionally
@@ -399,7 +431,6 @@ void Thread::finalize_dying_threads()
         for_each_in_state(Thread::State::Dying, [&](Thread& thread) {
             if (thread.is_finalizable())
                 dying_threads.append(&thread);
-            return IterationDecision::Continue;
         });
     }
     for (auto* thread : dying_threads) {
@@ -735,7 +766,6 @@ DispatchSignalResult Thread::dispatch_signal(u8 signal)
             process.set_dump_core(true);
             process.for_each_thread([](auto& thread) {
                 thread.set_dump_backtrace_on_finalization();
-                return IterationDecision::Continue;
             });
             [[fallthrough]];
         case DefaultSignalAction::Terminate:
@@ -886,11 +916,12 @@ void Thread::set_state(State new_state, u8 stop_signal)
         auto& process = this->process();
         if (process.set_stopped(false) == true) {
             process.for_each_thread([&](auto& thread) {
-                if (&thread == this || !thread.is_stopped())
-                    return IterationDecision::Continue;
+                if (&thread == this)
+                    return;
+                if (!thread.is_stopped())
+                    return;
                 dbgln_if(THREAD_DEBUG, "Resuming peer thread {}", thread);
                 thread.resume_from_stopped();
-                return IterationDecision::Continue;
             });
             process.unblock_waiters(Thread::WaitBlocker::UnblockFlags::Continued);
             // Tell the parent process (if any) about this change.
@@ -909,11 +940,12 @@ void Thread::set_state(State new_state, u8 stop_signal)
         auto& process = this->process();
         if (process.set_stopped(true) == false) {
             process.for_each_thread([&](auto& thread) {
-                if (&thread == this || thread.is_stopped())
-                    return IterationDecision::Continue;
+                if (&thread == this)
+                    return;
+                if (thread.is_stopped())
+                    return;
                 dbgln_if(THREAD_DEBUG, "Stopping peer thread {}", thread);
                 thread.set_state(Stopped, stop_signal);
-                return IterationDecision::Continue;
             });
             process.unblock_waiters(Thread::WaitBlocker::UnblockFlags::Stopped, stop_signal);
             // Tell the parent process (if any) about this change.
@@ -1007,6 +1039,8 @@ KResult Thread::make_thread_specific_region(Badge<Process>)
     if (region_or_error.is_error())
         return region_or_error.error();
 
+    m_thread_specific_range = range.value();
+
     SmapDisabler disabler;
     auto* thread_specific_data = (ThreadSpecificData*)region_or_error.value()->vaddr().offset(align_up_to(process().m_master_tls_size, thread_specific_region_alignment())).as_ptr();
     auto* thread_local_storage = (u8*)((u8*)thread_specific_data) - align_up_to(process().m_master_tls_size, process().m_master_tls_alignment);
@@ -1024,9 +1058,16 @@ RefPtr<Thread> Thread::from_tid(ThreadID tid)
     RefPtr<Thread> found_thread;
     {
         ScopedSpinLock lock(g_tid_map_lock);
-        auto it = g_tid_map->find(tid);
-        if (it != g_tid_map->end())
-            found_thread = it->value;
+        if (auto it = g_tid_map->find(tid); it != g_tid_map->end()) {
+            // We need to call try_ref() here as there is a window between
+            // dropping the last reference and calling the Thread's destructor!
+            // We shouldn't remove the threads from that list until it is truly
+            // destructed as it may stick around past finalization in order to
+            // be able to wait() on it!
+            if (it->value->try_ref()) {
+                found_thread = adopt_ref(*it->value);
+            }
+        }
     }
     return found_thread;
 }

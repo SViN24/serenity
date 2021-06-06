@@ -1,7 +1,7 @@
 /*
  * Copyright (c) 2018-2020, Andreas Kling <kling@serenityos.org>
  * Copyright (c) 2020, Itamar S. <itamar8910@gmail.com>
- * Copyright (c) 2020, the SerenityOS developers.
+ * Copyright (c) 2020-2021, the SerenityOS developers.
  *
  * SPDX-License-Identifier: BSD-2-Clause
  */
@@ -23,7 +23,7 @@
 #include <LibGUI/Scrollbar.h>
 #include <LibGUI/Splitter.h>
 #include <LibGUI/Widget.h>
-#include <LibThread/Thread.h>
+#include <LibThreading/Thread.h>
 
 namespace HackStudio {
 
@@ -88,7 +88,6 @@ private:
     NonnullRefPtr<GUI::Action> create_build_action();
     NonnullRefPtr<GUI::Action> create_run_action();
     NonnullRefPtr<GUI::Action> create_stop_action();
-    NonnullRefPtr<GUI::Action> create_set_autocomplete_mode_action();
 
     void add_new_editor(GUI::Widget& parent);
     RefPtr<EditorWrapper> get_editor_of_file(const String& filename);
@@ -103,7 +102,7 @@ private:
     void create_open_files_view(GUI::Widget& parent);
     void create_toolbar(GUI::Widget& parent);
     void create_action_tab(GUI::Widget& parent);
-    void create_app_menubar(GUI::Menubar&);
+    void create_file_menubar(GUI::Menubar&);
     void create_project_menubar(GUI::Menubar&);
     void create_edit_menubar(GUI::Menubar&);
     void create_build_menubar(GUI::Menubar&);
@@ -122,7 +121,7 @@ private:
     RefPtr<EditorWrapper> m_current_editor_wrapper;
 
     HashMap<String, NonnullRefPtr<ProjectFile>> m_open_files;
-    HashMap<String, NonnullRefPtr<Core::FileWatcher>> m_file_watchers;
+    RefPtr<Core::FileWatcher> m_file_watcher;
     Vector<String> m_open_files_vector; // NOTE: This contains the keys from m_open_files and m_file_watchers
 
     OwnPtr<Project> m_project;
@@ -145,7 +144,7 @@ private:
     RefPtr<FindInFilesWidget> m_find_in_files_widget;
     RefPtr<DebugInfoWidget> m_debug_info_widget;
     RefPtr<DisassemblyWidget> m_disassembly_widget;
-    RefPtr<LibThread::Thread> m_debugger_thread;
+    RefPtr<Threading::Thread> m_debugger_thread;
     RefPtr<EditorWrapper> m_current_editor_in_execution;
 
     RefPtr<GUI::Action> m_new_file_action;

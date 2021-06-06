@@ -84,13 +84,6 @@ void LanguageClient::provide_autocomplete_suggestions(const Vector<GUI::Autocomp
     // Otherwise, drop it on the floor :shrug:
 }
 
-void LanguageClient::set_autocomplete_mode(const String& mode)
-{
-    if (!m_connection_wrapper.connection())
-        return;
-    m_connection_wrapper.connection()->async_set_auto_complete_mode(mode);
-}
-
 void LanguageClient::set_active_client()
 {
     if (!m_connection_wrapper.connection())
@@ -185,7 +178,6 @@ void ServerConnectionWrapper::create_connection()
     VERIFY(m_connection.is_null());
     m_connection = m_connection_creator();
     m_connection->set_wrapper(*this);
-    m_connection->handshake();
 }
 
 ServerConnection* ServerConnectionWrapper::connection()

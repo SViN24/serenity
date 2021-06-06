@@ -1,9 +1,11 @@
 /*
  * Copyright (c) 2020, Andreas Kling <kling@serenityos.org>
+ * Copyright (c) 2020-2021, Linus Groh <linusg@serenityos.org>
  *
  * SPDX-License-Identifier: BSD-2-Clause
  */
 
+#include <AK/ScopeGuard.h>
 #include <AK/StringBuilder.h>
 #include <LibJS/AST.h>
 #include <LibJS/Interpreter.h>
@@ -80,13 +82,17 @@ const GlobalObject& Interpreter::global_object() const
 
 void Interpreter::enter_scope(const ScopeNode& scope_node, ScopeType scope_type, GlobalObject& global_object)
 {
-    for (auto& declaration : scope_node.functions()) {
-        auto* function = ScriptFunction::create(global_object, declaration.name(), declaration.body(), declaration.parameters(), declaration.function_length(), current_scope(), declaration.is_strict_mode());
-        vm().set_variable(declaration.name(), function, global_object);
-    }
+    ScopeGuard guard([&] {
+        for (auto& declaration : scope_node.functions()) {
+            auto* function = ScriptFunction::create(global_object, declaration.name(), declaration.body(), declaration.parameters(), declaration.function_length(), current_scope(), declaration.is_strict_mode());
+            vm().set_variable(declaration.name(), function, global_object);
+        }
+    });
 
     if (scope_type == ScopeType::Function) {
         push_scope({ scope_type, scope_node, false });
+        for (auto& declaration : scope_node.functions())
+            current_scope()->put_to_scope(declaration.name(), { js_undefined(), DeclarationKind::Var });
         return;
     }
 
@@ -96,11 +102,27 @@ void Interpreter::enter_scope(const ScopeNode& scope_node, ScopeType scope_type,
     for (auto& declaration : scope_node.variables()) {
         for (auto& declarator : declaration.declarations()) {
             if (is<Program>(scope_node)) {
-                global_object.put(declarator.id().string(), js_undefined());
+                declarator.target().visit(
+                    [&](const NonnullRefPtr<Identifier>& id) {
+                        global_object.put(id->string(), js_undefined());
+                    },
+                    [&](const NonnullRefPtr<BindingPattern>& binding) {
+                        binding->for_each_assigned_name([&](const auto& name) {
+                            global_object.put(name, js_undefined());
+                        });
+                    });
                 if (exception())
                     return;
             } else {
-                scope_variables_with_declaration_kind.set(declarator.id().string(), { js_undefined(), declaration.declaration_kind() });
+                declarator.target().visit(
+                    [&](const NonnullRefPtr<Identifier>& id) {
+                        scope_variables_with_declaration_kind.set(id->string(), { js_undefined(), declaration.declaration_kind() });
+                    },
+                    [&](const NonnullRefPtr<BindingPattern>& binding) {
+                        binding->for_each_assigned_name([&](const auto& name) {
+                            scope_variables_with_declaration_kind.set(name, { js_undefined(), declaration.declaration_kind() });
+                        });
+                    });
             }
         }
     }

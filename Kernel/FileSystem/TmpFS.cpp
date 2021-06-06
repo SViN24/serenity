@@ -11,9 +11,9 @@
 
 namespace Kernel {
 
-NonnullRefPtr<TmpFS> TmpFS::create()
+RefPtr<TmpFS> TmpFS::create()
 {
-    return adopt_ref(*new TmpFS);
+    return adopt_ref_if_nonnull(new TmpFS);
 }
 
 TmpFS::TmpFS()
@@ -27,7 +27,7 @@ TmpFS::~TmpFS()
 bool TmpFS::initialize()
 {
     m_root_inode = TmpFSInode::create_root(*this);
-    return true;
+    return !m_root_inode.is_null();
 }
 
 NonnullRefPtr<Inode> TmpFS::root_inode() const
@@ -84,14 +84,15 @@ TmpFSInode::~TmpFSInode()
 {
 }
 
-NonnullRefPtr<TmpFSInode> TmpFSInode::create(TmpFS& fs, InodeMetadata metadata, InodeIdentifier parent)
+RefPtr<TmpFSInode> TmpFSInode::create(TmpFS& fs, InodeMetadata metadata, InodeIdentifier parent)
 {
-    auto inode = adopt_ref(*new TmpFSInode(fs, metadata, parent));
-    fs.register_inode(inode);
+    auto inode = adopt_ref_if_nonnull(new TmpFSInode(fs, metadata, parent));
+    if (inode)
+        fs.register_inode(*inode);
     return inode;
 }
 
-NonnullRefPtr<TmpFSInode> TmpFSInode::create_root(TmpFS& fs)
+RefPtr<TmpFSInode> TmpFSInode::create_root(TmpFS& fs)
 {
     InodeMetadata metadata;
     auto now = kgettimeofday().to_truncated_seconds();
@@ -188,6 +189,8 @@ KResultOr<ssize_t> TmpFSInode::write_bytes(off_t offset, ssize_t size, const Use
 
     if (!buffer.read(m_content->data() + offset, size)) // TODO: partial reads?
         return EFAULT;
+
+    did_modify_contents();
     return size;
 }
 
@@ -268,10 +271,12 @@ KResultOr<NonnullRefPtr<Inode>> TmpFSInode::create_child(const String& name, mod
     metadata.mtime = now;
 
     auto child = TmpFSInode::create(fs(), metadata, identifier());
-    auto result = add_child(child, name, mode);
+    if (!child)
+        return ENOMEM;
+    auto result = add_child(*child, name, mode);
     if (result.is_error())
         return result;
-    return child;
+    return child.release_nonnull();
 }
 
 KResult TmpFSInode::add_child(Inode& child, const StringView& name, mode_t)
@@ -284,7 +289,7 @@ KResult TmpFSInode::add_child(Inode& child, const StringView& name, mode_t)
         return ENAMETOOLONG;
 
     m_children.set(name, { name, static_cast<TmpFSInode&>(child) });
-    did_add_child(child.identifier());
+    did_add_child(child.identifier(), name);
     return KSuccess;
 }
 
@@ -300,8 +305,9 @@ KResult TmpFSInode::remove_child(const StringView& name)
     if (it == m_children.end())
         return ENOENT;
     auto child_id = it->value.inode->identifier();
+    it->value.inode->did_delete_self();
     m_children.remove(it);
-    did_remove_child(child_id);
+    did_remove_child(child_id, name);
     return KSuccess;
 }
 

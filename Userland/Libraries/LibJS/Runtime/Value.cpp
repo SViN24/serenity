@@ -543,6 +543,16 @@ double Value::to_double(GlobalObject& global_object) const
     return number.as_double();
 }
 
+StringOrSymbol Value::to_property_key(GlobalObject& global_object) const
+{
+    auto key = to_primitive(global_object, PreferredType::String);
+    if (global_object.vm().exception())
+        return {};
+    if (key.is_symbol())
+        return &key.as_symbol();
+    return to_string(global_object);
+}
+
 i32 Value::to_i32_slow_case(GlobalObject& global_object) const
 {
     VERIFY(type() != Type::Int32);
@@ -556,7 +566,8 @@ i32 Value::to_i32_slow_case(GlobalObject& global_object) const
     auto int_val = floor(abs);
     if (signbit(value))
         int_val = -int_val;
-    auto int32bit = fmod(int_val, 4294967296.0);
+    auto remainder = fmod(int_val, 4294967296.0);
+    auto int32bit = remainder >= 0.0 ? remainder : remainder + 4294967296.0; // The notation “x modulo y” computes a value k of the same sign as y
     if (int32bit >= 2147483648.0)
         int32bit -= 4294967296.0;
     return static_cast<i32>(int32bit);
@@ -787,8 +798,13 @@ Value left_shift(GlobalObject& global_object, Value lhs, Value rhs)
         auto rhs_u32 = rhs_numeric.to_u32(global_object);
         return Value(lhs_i32 << rhs_u32);
     }
-    if (both_bigint(lhs_numeric, rhs_numeric))
-        TODO();
+    if (both_bigint(lhs_numeric, rhs_numeric)) {
+        auto multiplier_divisor = Crypto::SignedBigInteger { Crypto::NumberTheory::Power(Crypto::UnsignedBigInteger(2), rhs_numeric.as_bigint().big_integer().unsigned_value()) };
+        if (rhs_numeric.as_bigint().big_integer().is_negative())
+            return js_bigint(global_object.heap(), lhs_numeric.as_bigint().big_integer().divided_by(multiplier_divisor).quotient);
+        else
+            return js_bigint(global_object.heap(), lhs_numeric.as_bigint().big_integer().multiplied_by(multiplier_divisor));
+    }
     global_object.vm().throw_exception<TypeError>(global_object, ErrorType::BigIntBadOperatorOtherType, "left-shift");
     return {};
 }
@@ -813,8 +829,11 @@ Value right_shift(GlobalObject& global_object, Value lhs, Value rhs)
         auto rhs_u32 = rhs_numeric.to_u32(global_object);
         return Value(lhs_i32 >> rhs_u32);
     }
-    if (both_bigint(lhs_numeric, rhs_numeric))
-        TODO();
+    if (both_bigint(lhs_numeric, rhs_numeric)) {
+        auto rhs_negated = rhs_numeric.as_bigint().big_integer();
+        rhs_negated.negate();
+        return left_shift(global_object, lhs, js_bigint(global_object.heap(), rhs_negated));
+    }
     global_object.vm().throw_exception<TypeError>(global_object, ErrorType::BigIntBadOperatorOtherType, "right-shift");
     return {};
 }
@@ -1000,10 +1019,10 @@ Value in(GlobalObject& global_object, Value lhs, Value rhs)
         global_object.vm().throw_exception<TypeError>(global_object, ErrorType::InOperatorWithObject);
         return {};
     }
-    auto lhs_string_or_symbol = StringOrSymbol::from_value(global_object, lhs);
+    auto lhs_property_key = lhs.to_property_key(global_object);
     if (global_object.vm().exception())
         return {};
-    return Value(rhs.as_object().has_property(lhs_string_or_symbol));
+    return Value(rhs.as_object().has_property(lhs_property_key));
 }
 
 Value instance_of(GlobalObject& global_object, Value lhs, Value rhs)

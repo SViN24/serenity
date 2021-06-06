@@ -99,7 +99,7 @@ const Gfx::Font& WindowManager::font() const
 
 const Gfx::Font& WindowManager::window_title_font() const
 {
-    return Gfx::FontDatabase::default_bold_font();
+    return Gfx::FontDatabase::default_font().bold_variant();
 }
 
 bool WindowManager::set_resolution(int width, int height, int scale)
@@ -176,7 +176,7 @@ void WindowManager::add_window(Window& window)
 {
     bool is_first_window = m_windows_in_order.is_empty();
 
-    m_windows_in_order.append(&window);
+    m_windows_in_order.append(window);
 
     if (window.is_fullscreen()) {
         Core::EventLoop::current().post_event(window, make<ResizeEvent>(Screen::the().rect()));
@@ -228,10 +228,10 @@ void WindowManager::move_to_front_and_make_active(Window& window)
 
 void WindowManager::do_move_to_front(Window& window, bool make_active, bool make_input)
 {
-    if (m_windows_in_order.tail() != &window)
+    if (m_windows_in_order.last() != &window)
         window.invalidate();
-    m_windows_in_order.remove(&window);
-    m_windows_in_order.append(&window);
+    m_windows_in_order.remove(window);
+    m_windows_in_order.append(window);
 
     if (make_active)
         set_active_window(&window, make_input);
@@ -252,7 +252,7 @@ void WindowManager::do_move_to_front(Window& window, bool make_active, bool make
 
 void WindowManager::remove_window(Window& window)
 {
-    m_windows_in_order.remove(&window);
+    m_windows_in_order.remove(window);
     auto* active = active_window();
     auto* active_input = active_input_window();
     if (active == &window || active_input == &window || (active && window.is_descendant_of(*active)) || (active_input && active_input != active && window.is_descendant_of(*active_input)))
@@ -709,10 +709,11 @@ bool WindowManager::process_ongoing_window_resize(const MouseEvent& event, Windo
 
     if (m_resize_window->resize_aspect_ratio().has_value()) {
         auto& ratio = m_resize_window->resize_aspect_ratio().value();
+        auto base_size = m_resize_window->base_size();
         if (abs(change_w) > abs(change_h)) {
-            new_rect.set_height(new_rect.width() * ratio.height() / ratio.width());
+            new_rect.set_height(base_size.height() + (new_rect.width() - base_size.width()) * ratio.height() / ratio.width());
         } else {
-            new_rect.set_width(new_rect.height() * ratio.width() / ratio.height());
+            new_rect.set_width(base_size.width() + (new_rect.height() - base_size.height()) * ratio.width() / ratio.height());
         }
     }
 
@@ -1091,13 +1092,15 @@ void WindowManager::process_mouse_event(MouseEvent& event, Window*& hovered_wind
             set_active_window(nullptr);
     }
 
-    for (auto* window = m_windows_in_order.tail(); window; window = window->prev()) {
-        if (received_mouse_event == window)
+    auto reverse_iterator = m_windows_in_order.rbegin();
+    for (; reverse_iterator != m_windows_in_order.rend(); ++reverse_iterator) {
+        auto& window = *reverse_iterator;
+        if (received_mouse_event == &window)
             continue;
-        if (!window->global_cursor_tracking() || !window->is_visible() || window->is_minimized() || window->blocking_modal_window())
+        if (!window.global_cursor_tracking() || !window.is_visible() || window.is_minimized() || window.blocking_modal_window())
             continue;
-        auto translated_event = event.translated(-window->position());
-        deliver_mouse_event(*window, translated_event, false);
+        auto translated_event = event.translated(-window.position());
+        deliver_mouse_event(window, translated_event, false);
     }
 
     if (event_window_with_frame != m_resize_candidate.ptr())
@@ -1542,6 +1545,23 @@ Gfx::IntRect WindowManager::dnd_rect() const
     return Gfx::IntRect(location, { width, height }).inflated(16, 8);
 }
 
+void WindowManager::invalidate_after_theme_or_font_change()
+{
+    Compositor::the().set_background_color(m_config->read_entry("Background", "Color", palette().desktop_background().to_string()));
+    WindowFrame::reload_config();
+    for_each_window([&](Window& window) {
+        window.frame().theme_changed();
+        return IterationDecision::Continue;
+    });
+    ClientConnection::for_each_client([&](ClientConnection& client) {
+        client.async_update_system_theme(Gfx::current_system_theme_buffer());
+    });
+    MenuManager::the().did_change_theme();
+    AppletManager::the().did_change_theme();
+    Compositor::the().invalidate_occlusions();
+    Compositor::the().invalidate_screen();
+}
+
 bool WindowManager::update_theme(String theme_path, String theme_name)
 {
     auto new_theme = Gfx::load_system_theme(theme_path);
@@ -1549,26 +1569,11 @@ bool WindowManager::update_theme(String theme_path, String theme_name)
         return false;
     Gfx::set_system_theme(new_theme);
     m_palette = Gfx::PaletteImpl::create_with_anonymous_buffer(new_theme);
-    Compositor::the().set_background_color(palette().desktop_background().to_string());
-    HashTable<ClientConnection*> notified_clients;
-    WindowFrame::reload_config();
-    for_each_window([&](Window& window) {
-        if (window.client()) {
-            if (!notified_clients.contains(window.client())) {
-                window.client()->async_update_system_theme(Gfx::current_system_theme_buffer());
-                notified_clients.set(window.client());
-            }
-        }
-        window.frame().theme_changed();
-        return IterationDecision::Continue;
-    });
-    MenuManager::the().did_change_theme();
-    AppletManager::the().did_change_theme();
     auto wm_config = Core::ConfigFile::open("/etc/WindowServer.ini");
     wm_config->write_entry("Theme", "Name", theme_name);
+    wm_config->remove_entry("Background", "Color");
     wm_config->sync();
-    Compositor::the().invalidate_occlusions();
-    Compositor::the().invalidate_screen();
+    invalidate_after_theme_or_font_change();
     return true;
 }
 

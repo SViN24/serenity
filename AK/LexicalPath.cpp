@@ -55,7 +55,7 @@ void LexicalPath::canonicalize()
         }
     }
     if (canonical_parts.is_empty()) {
-        m_string = m_basename = m_dirname = "/";
+        m_string = m_basename = m_dirname = m_is_absolute ? "/" : ".";
         return;
     }
 
@@ -67,6 +67,10 @@ void LexicalPath::canonicalize()
         dirname_builder.append(canonical_part);
     }
     m_dirname = dirname_builder.to_string();
+
+    if (m_dirname.is_empty()) {
+        m_dirname = m_is_absolute ? "/" : ".";
+    }
 
     m_basename = canonical_parts.last();
 
@@ -114,6 +118,17 @@ String LexicalPath::relative_path(String absolute_path, const String& prefix)
         return {};
 
     return absolute_path.substring(prefix_length);
+}
+
+void LexicalPath::append(String const& component)
+{
+    StringBuilder builder;
+    builder.append(m_string);
+    builder.append('/');
+    builder.append(component);
+
+    m_string = builder.to_string();
+    canonicalize();
 }
 
 }

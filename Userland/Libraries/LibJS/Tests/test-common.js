@@ -174,13 +174,19 @@ class ExpectationError extends Error {
 
         toBeTrue() {
             this.__doMatcher(() => {
-                this.__expect(this.target === true);
+                this.__expect(
+                    this.target === true,
+                    () => `toBeTrue: expected target to be true, got _${String(this.target)}_`
+                );
             });
         }
 
         toBeFalse() {
             this.__doMatcher(() => {
-                this.__expect(this.target === false);
+                this.__expect(
+                    this.target === false,
+                    () => `toBeTrue: expected target to be false, got _${String(this.target)}_`
+                );
             });
         }
 
@@ -296,10 +302,22 @@ class ExpectationError extends Error {
             this.__doMatcher(() => {
                 try {
                     this.target();
-                    this.__expect(false);
+                    this.__expect(false, () => "toThrowWithMessage: target function did not throw");
                 } catch (e) {
-                    this.__expect(e instanceof class_);
-                    this.__expect(e.message.includes(message));
+                    this.__expect(
+                        e instanceof class_,
+                        () =>
+                            `toThrowWithMessage: expected error to be instance of ${
+                                class_.name
+                            }, got ${String(e.name)}`
+                    );
+                    this.__expect(
+                        e.message.includes(message),
+                        () =>
+                            `toThrowWithMessage: expected error message to include _${String(
+                                message
+                            )}_, got _${String(e.message)}_`
+                    );
                 }
             });
         }
@@ -423,7 +441,15 @@ class ExpectationError extends Error {
 
     describe = (message, callback) => {
         suiteMessage = message;
-        callback();
+        if (!__TestResults__[suiteMessage]) __TestResults__[suiteMessage] = {};
+        try {
+            callback();
+        } catch (e) {
+            __TestResults__[suiteMessage][defaultSuiteMessage] = {
+                result: "fail",
+                details: String(e),
+            };
+        }
         suiteMessage = defaultSuiteMessage;
     };
 

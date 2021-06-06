@@ -6,7 +6,7 @@
 
 #pragma once
 
-#include <AK/BitmapView.h>
+#include <AK/Bitmap.h>
 #include <AK/ScopeGuard.h>
 #include <AK/TemporaryChange.h>
 #include <AK/Vector.h>
@@ -113,7 +113,7 @@ public:
         VERIFY((u8*)a >= m_chunks && (u8*)ptr < m_chunks + m_total_chunks * CHUNK_SIZE);
         VERIFY((u8*)a + a->allocation_size_in_chunks * CHUNK_SIZE <= m_chunks + m_total_chunks * CHUNK_SIZE);
 
-        size_t old_size = a->allocation_size_in_chunks * CHUNK_SIZE;
+        size_t old_size = a->allocation_size_in_chunks * CHUNK_SIZE - sizeof(AllocationHeader);
 
         if (old_size == new_size)
             return ptr;
@@ -153,7 +153,7 @@ private:
     size_t m_total_chunks { 0 };
     size_t m_allocated_chunks { 0 };
     u8* m_chunks { nullptr };
-    BitmapView m_bitmap;
+    Bitmap m_bitmap;
 };
 
 template<typename ExpandHeap>

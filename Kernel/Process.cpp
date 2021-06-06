@@ -62,7 +62,7 @@ UNMAP_AFTER_INIT void Process::initialize()
 
     next_pid.store(0, AK::MemoryOrder::memory_order_release);
     g_processes = new InlineLinkedList<Process>;
-    g_process_groups = new InlineLinkedList<ProcessGroup>;
+    g_process_groups = new ProcessGroup::List();
     g_hostname = new String("courage");
     g_hostname_lock = new Lock;
 
@@ -103,15 +103,16 @@ void Process::kill_threads_except_self()
 
     auto current_thread = Thread::current();
     for_each_thread([&](Thread& thread) {
-        if (&thread == current_thread
-            || thread.state() == Thread::State::Dead
-            || thread.state() == Thread::State::Dying)
-            return IterationDecision::Continue;
+        if (&thread == current_thread)
+            return;
+
+        if (auto state = thread.state(); state == Thread::State::Dead
+            || state == Thread::State::Dying)
+            return;
 
         // We need to detach this thread in case it hasn't been joined
         thread.detach();
         thread.set_should_die();
-        return IterationDecision::Continue;
     });
 
     big_lock().clear_waiters();
@@ -123,7 +124,6 @@ void Process::kill_all_threads()
         // We need to detach this thread in case it hasn't been joined
         thread.detach();
         thread.set_should_die();
-        return IterationDecision::Continue;
     });
 }
 
@@ -144,7 +144,7 @@ RefPtr<Process> Process::create_user_process(RefPtr<Thread>& first_thread, const
     if (!cwd)
         cwd = VFS::the().root_custody();
 
-    auto process = adopt_ref(*new Process(first_thread, parts.take_last(), uid, gid, parent_pid, false, move(cwd), nullptr, tty));
+    auto process = Process::create(first_thread, parts.take_last(), uid, gid, parent_pid, false, move(cwd), nullptr, tty);
     if (!first_thread)
         return {};
     if (!process->m_fds.try_resize(m_max_open_file_descriptors)) {
@@ -175,8 +175,8 @@ RefPtr<Process> Process::create_user_process(RefPtr<Thread>& first_thread, const
 
 RefPtr<Process> Process::create_kernel_process(RefPtr<Thread>& first_thread, String&& name, void (*entry)(void*), void* entry_data, u32 affinity)
 {
-    auto process = adopt_ref(*new Process(first_thread, move(name), (uid_t)0, (gid_t)0, ProcessID(0), true));
-    if (!first_thread)
+    auto process = Process::create(first_thread, move(name), (uid_t)0, (gid_t)0, ProcessID(0), true);
+    if (!first_thread || !process)
         return {};
     first_thread->tss().eip = (FlatPtr)entry;
     first_thread->tss().esp = FlatPtr(entry_data); // entry function argument is expected to be in tss.esp
@@ -203,7 +203,18 @@ void Process::unprotect_data()
     MM.set_page_writable_direct(VirtualAddress { this }, true);
 }
 
-Process::Process(RefPtr<Thread>& first_thread, const String& name, uid_t uid, gid_t gid, ProcessID ppid, bool is_kernel_process, RefPtr<Custody> cwd, RefPtr<Custody> executable, TTY* tty, Process* fork_parent)
+RefPtr<Process> Process::create(RefPtr<Thread>& first_thread, const String& name, uid_t uid, gid_t gid, ProcessID ppid, bool is_kernel_process, RefPtr<Custody> cwd, RefPtr<Custody> executable, TTY* tty, Process* fork_parent)
+{
+    auto process = adopt_ref_if_nonnull(new Process(name, uid, gid, ppid, is_kernel_process, move(cwd), move(executable), tty));
+    if (!process)
+        return {};
+    auto result = process->attach_resources(first_thread, fork_parent);
+    if (result.is_error())
+        return {};
+    return process;
+}
+
+Process::Process(const String& name, uid_t uid, gid_t gid, ProcessID ppid, bool is_kernel_process, RefPtr<Custody> cwd, RefPtr<Custody> executable, TTY* tty)
     : m_name(move(name))
     , m_is_kernel_process(is_kernel_process)
     , m_executable(move(executable))
@@ -224,19 +235,28 @@ Process::Process(RefPtr<Thread>& first_thread, const String& name, uid_t uid, gi
     m_sgid = gid;
 
     dbgln_if(PROCESS_DEBUG, "Created new process {}({})", m_name, this->pid().value());
+}
 
+KResult Process::attach_resources(RefPtr<Thread>& first_thread, Process* fork_parent)
+{
     m_space = Space::create(*this, fork_parent ? &fork_parent->space() : nullptr);
+    if (!m_space)
+        return ENOMEM;
 
     if (fork_parent) {
         // NOTE: fork() doesn't clone all threads; the thread that called fork() becomes the only thread in the new process.
         first_thread = Thread::current()->clone(*this);
+        if (!first_thread)
+            return ENOMEM;
     } else {
         // NOTE: This non-forked code path is only taken when the kernel creates a process "manually" (at boot.)
         auto thread_or_error = Thread::try_create(*this);
-        VERIFY(!thread_or_error.is_error());
+        if (thread_or_error.is_error())
+            return thread_or_error.error();
         first_thread = thread_or_error.release_value();
         first_thread->detach();
     }
+    return KSuccess;
 }
 
 Process::~Process()
@@ -414,19 +434,19 @@ Custody& Process::current_directory()
     return *m_cwd;
 }
 
-KResultOr<String> Process::get_syscall_path_argument(const char* user_path, size_t path_length) const
+KResultOr<NonnullOwnPtr<KString>> Process::get_syscall_path_argument(char const* user_path, size_t path_length) const
 {
     if (path_length == 0)
         return EINVAL;
     if (path_length > PATH_MAX)
         return ENAMETOOLONG;
-    auto copied_string = copy_string_from_user(user_path, path_length);
-    if (copied_string.is_null())
-        return EFAULT;
-    return copied_string;
+    auto string_or_error = try_copy_kstring_from_user(user_path, path_length);
+    if (string_or_error.is_error())
+        return string_or_error.error();
+    return string_or_error.release_value();
 }
 
-KResultOr<String> Process::get_syscall_path_argument(const Syscall::StringArgument& path) const
+KResultOr<NonnullOwnPtr<KString>> Process::get_syscall_path_argument(Syscall::StringArgument const& path) const
 {
     return get_syscall_path_argument(path.characters, path.length);
 }
@@ -460,7 +480,10 @@ bool Process::dump_perfcore()
     if (!json)
         return false;
     auto json_buffer = UserOrKernelBuffer::for_kernel_buffer(json->data());
-    return !description->write(json_buffer, json->size()).is_error();
+    if (description->write(json_buffer, json->size()).is_error())
+        return false;
+    dbgln("Wrote perfcore to {}", description->absolute_path());
+    return true;
 }
 
 void Process::finalize()
@@ -472,8 +495,10 @@ void Process::finalize()
     if (is_dumpable()) {
         if (m_should_dump_core)
             dump_core();
-        if (m_perf_event_buffer)
+        if (m_perf_event_buffer) {
             dump_perfcore();
+            TimeManagement::the().disable_profile_timer();
+        }
     }
 
     m_threads_for_coredump.clear();
@@ -542,7 +567,6 @@ void Process::die()
 
     for_each_thread([&](auto& thread) {
         m_threads_for_coredump.append(thread);
-        return IterationDecision::Continue;
     });
 
     {
@@ -660,9 +684,13 @@ void Process::set_tty(TTY* tty)
     m_tty = tty;
 }
 
-void Process::start_tracing_from(ProcessID tracer)
+KResult Process::start_tracing_from(ProcessID tracer)
 {
-    m_tracer = ThreadTracer::create(tracer);
+    auto thread_tracer = ThreadTracer::create(tracer);
+    if (!thread_tracer)
+        return ENOMEM;
+    m_tracer = move(thread_tracer);
+    return KSuccess;
 }
 
 void Process::stop_tracing()

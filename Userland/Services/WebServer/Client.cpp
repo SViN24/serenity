@@ -6,11 +6,12 @@
 
 #include "Client.h"
 #include <AK/Base64.h>
+#include <AK/Debug.h>
 #include <AK/LexicalPath.h>
 #include <AK/MappedFile.h>
 #include <AK/MemoryStream.h>
 #include <AK/StringBuilder.h>
-#include <AK/URLParser.h>
+#include <AK/URL.h>
 #include <LibCore/DateTime.h>
 #include <LibCore/DirIterator.h>
 #include <LibCore/File.h>
@@ -40,15 +41,18 @@ void Client::die()
 void Client::start()
 {
     m_socket->on_ready_to_read = [this] {
-        auto raw_request = m_socket->read_all();
-        if (raw_request.is_null()) {
-            die();
-            return;
+        StringBuilder builder;
+        for (;;) {
+            auto line = m_socket->read_line();
+            if (line.is_empty())
+                break;
+            builder.append(line);
+            builder.append("\r\n");
         }
 
-        dbgln("Got raw request: '{}'", String::copy(raw_request));
-
-        handle_request(raw_request.bytes());
+        auto request = builder.to_byte_buffer();
+        dbgln_if(WEBSERVER_DEBUG, "Got raw request: '{}'", String::copy(request));
+        handle_request(request);
         die();
     };
 }
@@ -60,9 +64,11 @@ void Client::handle_request(ReadonlyBytes raw_request)
         return;
     auto& request = request_or_error.value();
 
-    dbgln("Got HTTP request: {} {}", request.method_name(), request.resource());
-    for (auto& header : request.headers()) {
-        dbgln("    {} => {}", header.name, header.value);
+    if constexpr (WEBSERVER_DEBUG) {
+        dbgln("Got HTTP request: {} {}", request.method_name(), request.resource());
+        for (auto& header : request.headers()) {
+            dbgln("    {} => {}", header.name, header.value);
+        }
     }
 
     if (request.method() != HTTP::HttpRequest::Method::GET) {
@@ -70,8 +76,8 @@ void Client::handle_request(ReadonlyBytes raw_request)
         return;
     }
 
-    auto requested_path = LexicalPath::canonicalized_path(request.resource());
-    dbgln("Canonical requested path: '{}'", requested_path);
+    auto requested_path = LexicalPath::join("/", request.resource()).string();
+    dbgln_if(WEBSERVER_DEBUG, "Canonical requested path: '{}'", requested_path);
 
     StringBuilder path_builder;
     path_builder.append(m_root_path);
@@ -103,7 +109,7 @@ void Client::handle_request(ReadonlyBytes raw_request)
     }
 
     auto file = Core::File::construct(real_path);
-    if (!file->open(Core::File::ReadOnly)) {
+    if (!file->open(Core::OpenMode::ReadOnly)) {
         send_error_response(404, "Not found!", request);
         return;
     }
@@ -120,6 +126,7 @@ void Client::send_response(InputStream& response, const HTTP::HttpRequest& reque
     builder.append("Server: WebServer (SerenityOS)\r\n");
     builder.append("X-Frame-Options: SAMEORIGIN\r\n");
     builder.append("X-Content-Type-Options: nosniff\r\n");
+    builder.append("Pragma: no-cache\r\n");
     builder.append("Content-Type: ");
     builder.append(content_type);
     builder.append("\r\n");
@@ -216,7 +223,7 @@ void Client::handle_directory_listing(const String& requested_path, const String
         builder.append("<tr>");
         builder.appendff("<td><div class=\"{}\"></div></td>", is_directory ? "folder" : "file");
         builder.append("<td><a href=\"");
-        builder.append(urlencode(name));
+        builder.append(URL::percent_encode(name));
         builder.append("\">");
         builder.append(escape_html_entities(name));
         builder.append("</a></td><td>&nbsp;</td>");

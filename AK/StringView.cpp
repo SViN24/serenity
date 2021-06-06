@@ -99,12 +99,13 @@ Vector<StringView> StringView::lines(bool consider_cr) const
             if (last_ch_was_cr) {
                 substart = i + 1;
                 split_view = false;
-                last_ch_was_cr = false;
             }
         }
         if (ch == '\r') {
             split_view = true;
             last_ch_was_cr = true;
+        } else {
+            last_ch_was_cr = false;
         }
         if (split_view) {
             size_t sublen = i - substart;
@@ -213,13 +214,6 @@ template Optional<u32> StringView::to_uint() const;
 template Optional<u64> StringView::to_uint() const;
 template Optional<long> StringView::to_uint() const;
 template Optional<long long> StringView::to_uint() const;
-
-unsigned StringView::hash() const
-{
-    if (is_empty())
-        return 0;
-    return string_hash(characters_without_null_termination(), length());
-}
 
 bool StringView::operator==(const String& string) const
 {

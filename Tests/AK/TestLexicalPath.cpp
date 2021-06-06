@@ -24,12 +24,16 @@ TEST_CASE(basic)
     EXPECT_EQ(path.parts().size(), 3u);
     EXPECT_EQ(path.parts(), Vector<String>({ "abc", "def", "ghi.txt" }));
     EXPECT_EQ(path.string(), "/abc/def/ghi.txt");
+    EXPECT_EQ(LexicalPath(".").string(), ".");
+    EXPECT_EQ(LexicalPath("..").string(), "..");
 }
 
 TEST_CASE(dotdot_coalescing)
 {
     EXPECT_EQ(LexicalPath("/home/user/../../not/home").string(), "/not/home");
     EXPECT_EQ(LexicalPath("/../../../../").string(), "/");
+    EXPECT_EQ(LexicalPath("./../../../../").string(), "../../../..");
+    EXPECT_EQ(LexicalPath("../../../../../").string(), "../../../../..");
 }
 
 TEST_CASE(has_extension)
@@ -73,4 +77,12 @@ TEST_CASE(relative_path)
 
     EXPECT_EQ(LexicalPath::relative_path("/tmp/foo.txt", "tmp"), String {});
     EXPECT_EQ(LexicalPath::relative_path("tmp/foo.txt", "/tmp"), String {});
+}
+
+TEST_CASE(dirname)
+{
+    EXPECT_EQ(LexicalPath(".").dirname(), ".");
+    EXPECT_EQ(LexicalPath("/").dirname(), "/");
+    EXPECT_EQ(LexicalPath("abc.txt").dirname(), ".");
+    EXPECT_EQ(LexicalPath("/abc.txt").dirname(), "/");
 }

@@ -10,7 +10,8 @@
 
 #include <AK/Assertions.h>
 
-constexpr unsigned round_up_to_power_of_two(unsigned value, unsigned power_of_two)
+template<typename T, typename U>
+constexpr auto round_up_to_power_of_two(T value, U power_of_two) requires(IsIntegral<T>&& IsIntegral<U>)
 {
     return ((value - 1) & ~(power_of_two - 1)) + power_of_two;
 }
@@ -37,9 +38,6 @@ struct _RawPtr {
 }
 
 namespace AK {
-
-template<typename T>
-auto declval() -> T;
 
 template<class T>
 constexpr T&& forward(RemoveReference<T>& param)
@@ -117,7 +115,6 @@ using RawPtr = typename Detail::_RawPtr<T>::Type;
 using AK::array_size;
 using AK::ceil_div;
 using AK::clamp;
-using AK::declval;
 using AK::exchange;
 using AK::forward;
 using AK::max;

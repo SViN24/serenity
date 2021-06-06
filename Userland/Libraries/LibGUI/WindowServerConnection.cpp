@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2018-2020, Andreas Kling <kling@serenityos.org>
+ * Copyright (c) 2018-2021, Andreas Kling <kling@serenityos.org>
  *
  * SPDX-License-Identifier: BSD-2-Clause
  */
@@ -21,6 +21,7 @@
 #include <LibGUI/Window.h>
 #include <LibGUI/WindowServerConnection.h>
 #include <LibGfx/Bitmap.h>
+#include <LibGfx/FontDatabase.h>
 #include <LibGfx/Palette.h>
 #include <LibGfx/SystemTheme.h>
 
@@ -40,11 +41,21 @@ static void set_system_theme_from_anonymous_buffer(Core::AnonymousBuffer buffer)
     Application::the()->set_system_palette(buffer);
 }
 
-void WindowServerConnection::handshake()
+WindowServerConnection::WindowServerConnection()
+    : IPC::ServerConnection<WindowClientEndpoint, WindowServerEndpoint>(*this, "/tmp/portal/window")
 {
-    auto response = greet();
-    set_system_theme_from_anonymous_buffer(response.theme_buffer());
-    Desktop::the().did_receive_screen_rect({}, response.screen_rect());
+    // NOTE: WindowServer automatically sends a "fast_greet" message to us when we connect.
+    //       All we have to do is wait for it to arrive. This avoids a round-trip during application startup.
+    auto message = wait_for_specific_message<Messages::WindowClient::FastGreet>();
+    set_system_theme_from_anonymous_buffer(message->theme_buffer());
+    Desktop::the().did_receive_screen_rect({}, message->screen_rect());
+    Gfx::FontDatabase::set_default_font_query(message->default_font_query());
+    Gfx::FontDatabase::set_fixed_width_font_query(message->fixed_width_font_query());
+}
+
+void WindowServerConnection::fast_greet(Gfx::IntRect const&, Core::AnonymousBuffer const&, String const&, String const&)
+{
+    // NOTE: This message is handled in the constructor.
 }
 
 void WindowServerConnection::update_system_theme(Core::AnonymousBuffer const& theme_buffer)
@@ -54,6 +65,13 @@ void WindowServerConnection::update_system_theme(Core::AnonymousBuffer const& th
     Window::for_each_window({}, [](auto& window) {
         Core::EventLoop::current().post_event(window, make<ThemeChangeEvent>());
     });
+}
+
+void WindowServerConnection::update_system_fonts(const String& default_font_query, const String& fixed_width_font_query)
+{
+    Gfx::FontDatabase::set_default_font_query(default_font_query);
+    Gfx::FontDatabase::set_fixed_width_font_query(fixed_width_font_query);
+    Window::update_all_windows({});
 }
 
 void WindowServerConnection::paint(i32 window_id, Gfx::IntSize const& window_size, Vector<Gfx::IntRect> const& rects)
@@ -111,6 +129,36 @@ void WindowServerConnection::window_left(i32 window_id)
         Core::EventLoop::current().post_event(*window, make<Event>(Event::WindowLeft));
 }
 
+static Action* action_for_key_event(Window& window, KeyEvent const& event)
+{
+    if (event.key() == KeyCode::Key_Invalid)
+        return nullptr;
+
+    dbgln_if(KEYBOARD_SHORTCUTS_DEBUG, "Looking up action for {}", event.to_string());
+
+    for (auto* widget = window.focused_widget(); widget; widget = widget->parent_widget()) {
+        if (auto* action = widget->action_for_key_event(event)) {
+            dbgln_if(KEYBOARD_SHORTCUTS_DEBUG, "  > Focused widget {} gave action: {}", *widget, action);
+            return action;
+        }
+    }
+
+    if (auto* action = window.action_for_key_event(event)) {
+        dbgln_if(KEYBOARD_SHORTCUTS_DEBUG, "  > Asked window {}, got action: {}", window, action);
+        return action;
+    }
+
+    // NOTE: Application-global shortcuts are ignored while a modal window is up.
+    if (!window.is_modal()) {
+        if (auto* action = Application::the()->action_for_key_event(event)) {
+            dbgln_if(KEYBOARD_SHORTCUTS_DEBUG, "  > Asked application, got action: {}", action);
+            return action;
+        }
+    }
+
+    return nullptr;
+}
+
 void WindowServerConnection::key_down(i32 window_id, u32 code_point, u32 key, u32 modifiers, u32 scancode)
 {
     auto* window = Window::from_window_id(window_id);
@@ -118,30 +166,8 @@ void WindowServerConnection::key_down(i32 window_id, u32 code_point, u32 key, u3
         return;
 
     auto key_event = make<KeyEvent>(Event::KeyDown, (KeyCode)key, modifiers, code_point, scancode);
-    Action* action = nullptr;
 
-    dbgln_if(KEYBOARD_SHORTCUTS_DEBUG, "Looking up action for {}", key_event->to_string());
-
-    if (auto* focused_widget = window->focused_widget()) {
-        for (auto* widget = focused_widget; widget && !action; widget = widget->parent_widget()) {
-            action = widget->action_for_key_event(*key_event);
-
-            dbgln_if(KEYBOARD_SHORTCUTS_DEBUG, "  > Focused widget {} gave action: {}", *widget, action);
-        }
-    }
-
-    if (!action) {
-        action = window->action_for_key_event(*key_event);
-        dbgln_if(KEYBOARD_SHORTCUTS_DEBUG, "  > Asked window {}, got action: {}", *window, action);
-    }
-
-    // NOTE: Application-global shortcuts are ignored while a modal window is up.
-    if (!action && !window->is_modal()) {
-        action = Application::the()->action_for_key_event(*key_event);
-        dbgln_if(KEYBOARD_SHORTCUTS_DEBUG, "  > Asked application, got action: {}", action);
-    }
-
-    if (action) {
+    if (auto* action = action_for_key_event(*window, *key_event)) {
         if (action->is_enabled()) {
             action->activate();
             return;

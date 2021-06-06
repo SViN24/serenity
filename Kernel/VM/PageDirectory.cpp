@@ -13,9 +13,6 @@
 
 namespace Kernel {
 
-static const FlatPtr userspace_range_base = 0x00800000;
-static const FlatPtr userspace_range_ceiling = 0xbe000000;
-
 static AK::Singleton<HashMap<u32, PageDirectory*>> s_cr3_map;
 
 static HashMap<u32, PageDirectory*>& cr3_map()
@@ -36,7 +33,7 @@ extern "C" PageDirectoryEntry boot_pd3[1024];
 
 UNMAP_AFTER_INIT PageDirectory::PageDirectory()
 {
-    m_range_allocator.initialize_with_range(VirtualAddress(0xc1000000), 0x30800000);
+    m_range_allocator.initialize_with_range(VirtualAddress(0xc2000000), 0x2f000000);
     m_identity_range_allocator.initialize_with_range(VirtualAddress(FlatPtr(0x00000000)), 0x00200000);
 
     // Adopt the page tables already set up by boot.S
@@ -53,6 +50,9 @@ UNMAP_AFTER_INIT PageDirectory::PageDirectory()
 
 PageDirectory::PageDirectory(const RangeAllocator* parent_range_allocator)
 {
+    constexpr FlatPtr userspace_range_base = 0x00800000;
+    constexpr FlatPtr userspace_range_ceiling = 0xbe000000;
+
     ScopedSpinLock lock(s_mm_lock);
     if (parent_range_allocator) {
         m_range_allocator.initialize_from_parent(*parent_range_allocator);

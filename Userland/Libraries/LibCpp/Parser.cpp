@@ -21,12 +21,7 @@ Parser::Parser(const StringView& program, const String& filename, Preprocessor::
     if constexpr (CPP_DEBUG) {
         dbgln("Tokens:");
         for (auto& token : m_tokens) {
-            StringView text;
-            if (token.start().line != token.end().line || token.start().column > token.end().column)
-                text = {};
-            else
-                text = text_of_token(token);
-            dbgln("{}  {}:{}-{}:{} ({})", token.to_string(), token.start().line, token.start().column, token.end().line, token.end().column, text);
+            dbgln("{}", token.to_string());
         }
     }
 }
@@ -235,6 +230,10 @@ bool Parser::match_type()
     ScopeGuard state_guard = [this] { load_state(); };
 
     parse_type_qualifiers();
+    if (match_keyword("auto")) {
+        return true;
+    }
+
     if (match_keyword("struct")) {
         consume(Token::Type::Keyword); // Consume struct prefix
     }
@@ -847,9 +846,8 @@ void Parser::error(StringView message)
 
 bool Parser::match_expression()
 {
-    auto token_type = peek().type();
     return match_literal()
-        || token_type == Token::Type::Identifier
+        || match_name()
         || match_unary_expression()
         || match_cpp_cast_expression()
         || match_c_style_cast_expression()
@@ -899,7 +897,7 @@ Optional<size_t> Parser::index_of_node_at(Position pos) const
         if (node.start() > pos || node.end() < pos)
             continue;
 
-        if (!match_node_index.has_value() || (node_span(node) < node_span(m_state.nodes[match_node_index.value()])))
+        if (!match_node_index.has_value() || (node_span(node) <= node_span(m_state.nodes[match_node_index.value()])))
             match_node_index = node_index;
     }
     return match_node_index;
@@ -927,7 +925,7 @@ Optional<size_t> Parser::index_of_token_at(Position pos) const
 void Parser::print_tokens() const
 {
     for (auto& token : m_tokens) {
-        dbgln("{}", token.to_string());
+        outln("{}", token.to_string());
     }
 }
 
@@ -1104,16 +1102,22 @@ NonnullRefPtr<Type> Parser::parse_type(ASTNode& parent)
     auto qualifiers = parse_type_qualifiers();
     type->m_qualifiers = move(qualifiers);
 
-    if (match_keyword("struct")) {
-        consume(Token::Type::Keyword); // Consume struct prefix
-    }
+    if (match_keyword("auto")) {
+        consume(Token::Type::Keyword);
+        type->m_is_auto = true;
+    } else {
 
-    if (!match_name()) {
-        type->set_end(position());
-        error(String::formatted("expected name instead of: {}", peek().text()));
-        return type;
+        if (match_keyword("struct")) {
+            consume(Token::Type::Keyword); // Consume struct prefix
+        }
+
+        if (!match_name()) {
+            type->set_end(position());
+            error(String::formatted("expected name instead of: {}", peek().text()));
+            return type;
+        }
+        type->m_name = parse_name(*type);
     }
-    type->m_name = parse_name(*type);
 
     while (!eof() && peek().type() == Token::Type::Asterisk) {
         type->set_end(position());
@@ -1291,17 +1295,19 @@ bool Parser::match_name()
 NonnullRefPtr<Name> Parser::parse_name(ASTNode& parent)
 {
     NonnullRefPtr<Name> name_node = create_ast_node<Name>(parent, position(), {});
-    while (!eof() && (peek().type() == Token::Type::Identifier || peek().type() == Token::Type::KnownType)) {
+    while (!eof() && (peek().type() == Token::Type::Identifier || peek().type() == Token::Type::KnownType) && peek(1).type() == Token::Type::ColonColon) {
         auto token = consume();
         name_node->m_scope.append(create_ast_node<Identifier>(*name_node, token.start(), token.end(), token.text()));
-        if (peek().type() == Token::Type::ColonColon)
-            consume();
-        else
-            break;
+        consume(Token::Type::ColonColon);
     }
 
-    VERIFY(!name_node->m_scope.is_empty());
-    name_node->m_name = name_node->m_scope.take_last();
+    if (peek().type() == Token::Type::Identifier || peek().type() == Token::Type::KnownType) {
+        auto token = consume();
+        name_node->m_name = create_ast_node<Identifier>(*name_node, token.start(), token.end(), token.text());
+    } else {
+        name_node->set_end(position());
+        return name_node;
+    }
 
     if (match_template_arguments()) {
         consume(Token::Type::Less);

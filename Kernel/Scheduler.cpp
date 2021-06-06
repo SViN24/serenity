@@ -4,7 +4,6 @@
  * SPDX-License-Identifier: BSD-2-Clause
  */
 
-#include <AK/QuickSort.h>
 #include <AK/ScopeGuard.h>
 #include <AK/TemporaryChange.h>
 #include <AK/Time.h>
@@ -176,8 +175,6 @@ bool Scheduler::pick_next()
 {
     VERIFY_INTERRUPTS_DISABLED();
 
-    auto current_thread = Thread::current();
-
     // Set the m_in_scheduler flag before acquiring the spinlock. This
     // prevents a recursive call into Scheduler::invoke_async upon
     // leaving the scheduler lock.
@@ -194,22 +191,6 @@ bool Scheduler::pick_next()
         });
 
     ScopedSpinLock lock(g_scheduler_lock);
-
-    if (current_thread->should_die() && current_thread->state() == Thread::Running) {
-        // Rather than immediately killing threads, yanking the kernel stack
-        // away from them (which can lead to e.g. reference leaks), we always
-        // allow Thread::wait_on to return. This allows the kernel stack to
-        // clean up and eventually we'll get here shortly before transitioning
-        // back to user mode (from Processor::exit_trap). At this point we
-        // no longer want to schedule this thread. We can't wait until
-        // Scheduler::enter_current because we don't want to allow it to
-        // transition back to user mode.
-
-        if constexpr (SCHEDULER_DEBUG)
-            dbgln("Scheduler[{}]: Thread {} is dying", Processor::id(), *current_thread);
-
-        current_thread->set_state(Thread::Dying);
-    }
 
     if constexpr (SCHEDULER_RUNNABLE_DEBUG) {
         dump_thread_list();
@@ -342,6 +323,10 @@ bool Scheduler::donate_to(RefPtr<Thread>& beneficiary, const char* reason)
 
 bool Scheduler::context_switch(Thread* thread)
 {
+    if (s_mm_lock.own_lock()) {
+        PANIC("In context switch while holding s_mm_lock");
+    }
+
     thread->did_schedule();
 
     auto from_thread = Thread::current();
@@ -365,6 +350,8 @@ bool Scheduler::context_switch(Thread* thread)
         thread->set_initialized(true);
     }
     thread->set_state(Thread::Running);
+
+    PerformanceManager::add_context_switch_perf_event(*from_thread, *thread);
 
     proc.switch_context(from_thread, thread);
 
@@ -501,8 +488,6 @@ void Scheduler::timer_tick(const RegisterState& regs)
         return; // TODO: This prevents scheduling on other CPUs!
 #endif
 
-    PerformanceManager::add_cpu_sample_event(*current_thread, regs);
-
     if (current_thread->tick())
         return;
 
@@ -587,10 +572,10 @@ void dump_thread_list()
         return thread.get_register_dump_from_stack().eip;
     };
 
-    Thread::for_each([&](Thread& thread) -> IterationDecision {
+    Thread::for_each([&](Thread& thread) {
         switch (thread.state()) {
         case Thread::Dying:
-            dbgln("  {:14} {:30} @ {:04x}:{:08x} Finalizable: {}, (nsched: {})",
+            dmesgln("  {:14} {:30} @ {:04x}:{:08x} Finalizable: {}, (nsched: {})",
                 thread.state_string(),
                 thread,
                 get_cs(thread),
@@ -599,7 +584,7 @@ void dump_thread_list()
                 thread.times_scheduled());
             break;
         default:
-            dbgln("  {:14} Pr:{:2} {:30} @ {:04x}:{:08x} (nsched: {})",
+            dmesgln("  {:14} Pr:{:2} {:30} @ {:04x}:{:08x} (nsched: {})",
                 thread.state_string(),
                 thread.priority(),
                 thread,
@@ -608,8 +593,6 @@ void dump_thread_list()
                 thread.times_scheduled());
             break;
         }
-
-        return IterationDecision::Continue;
     });
 }
 

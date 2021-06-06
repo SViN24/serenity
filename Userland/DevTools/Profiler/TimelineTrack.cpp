@@ -5,6 +5,7 @@
  */
 
 #include "TimelineTrack.h"
+#include "Histogram.h"
 #include "Profile.h"
 #include "TimelineView.h"
 #include <LibGUI/Painter.h>
@@ -21,12 +22,17 @@ TimelineTrack::TimelineTrack(TimelineView const& view, Profile const& profile, P
     set_fill_with_background_color(true);
     set_background_role(Gfx::ColorRole::Base);
     set_fixed_height(40);
-    set_fixed_width(m_profile.length_in_ms() / 10);
+    set_scale(view.scale());
     set_frame_thickness(1);
 }
 
 TimelineTrack::~TimelineTrack()
 {
+}
+
+void TimelineTrack::set_scale(float scale)
+{
+    set_fixed_width(m_profile.length_in_ms() / scale);
 }
 
 void TimelineTrack::event(Core::Event& event)
@@ -57,25 +63,50 @@ void TimelineTrack::paint_event(GUI::PaintEvent& event)
     };
 
     float column_width = (float)frame_inner_rect().width() / (float)m_profile.length_in_ms();
-    float frame_height = (float)frame_inner_rect().height() / (float)m_profile.deepest_stack_depth();
+    size_t columns = frame_inner_rect().width() / column_width;
+
+    Histogram kernel_histogram { start_of_trace, end_of_trace, columns };
+    Histogram usermode_histogram { start_of_trace, end_of_trace, columns };
+    auto bucket_count = kernel_histogram.size();
 
     for (auto& event : m_profile.events()) {
         if (event.pid != m_process.pid)
             continue;
 
-        if (!m_process.valid_at(event.timestamp))
+        if (!m_process.valid_at(event.serial))
             continue;
 
-        u64 t = clamp_timestamp(event.timestamp) - start_of_trace;
+        auto& histogram = event.in_kernel ? kernel_histogram : usermode_histogram;
+        histogram.insert(clamp_timestamp(event.timestamp), 1 + event.lost_samples);
+    }
+
+    decltype(kernel_histogram.at(0)) max_value = 0;
+    for (size_t bucket = 0; bucket < bucket_count; bucket++) {
+        auto value = kernel_histogram.at(bucket) + usermode_histogram.at(bucket);
+        if (value > max_value)
+            max_value = value;
+    }
+
+    float frame_height = (float)frame_inner_rect().height() / (float)max_value;
+
+    for (size_t bucket = 0; bucket < bucket_count; bucket++) {
+        auto kernel_value = kernel_histogram.at(bucket);
+        auto usermode_value = usermode_histogram.at(bucket);
+        if (kernel_value + usermode_value == 0)
+            continue;
+
+        auto t = bucket;
+
         int x = (int)((float)t * column_width);
         int cw = max(1, (int)column_width);
 
-        int column_height = frame_inner_rect().height() - (int)((float)event.frames.size() * frame_height);
+        int kernel_column_height = frame_inner_rect().height() - (int)((float)kernel_value * frame_height);
+        int usermode_column_height = frame_inner_rect().height() - (int)((float)(kernel_value + usermode_value) * frame_height);
 
-        bool in_kernel = event.in_kernel;
-        Color color = in_kernel ? Color::from_rgb(0xc25e5a) : Color::from_rgb(0x5a65c2);
-        for (int i = 1; i <= cw; ++i)
-            painter.draw_line({ x + i, frame_thickness() + column_height }, { x + i, height() - frame_thickness() * 2 }, color);
+        constexpr auto kernel_color = Color::from_rgb(0xc25e5a);
+        constexpr auto usermode_color = Color::from_rgb(0x5a65c2);
+        painter.fill_rect({ x, frame_thickness() + usermode_column_height, cw, height() - frame_thickness() * 2 }, usermode_color);
+        painter.fill_rect({ x, frame_thickness() + kernel_column_height, cw, height() - frame_thickness() * 2 }, kernel_color);
     }
 
     u64 normalized_start_time = clamp_timestamp(min(m_view.select_start_time(), m_view.select_end_time()));

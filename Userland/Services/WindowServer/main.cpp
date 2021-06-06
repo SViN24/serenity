@@ -19,7 +19,7 @@
 
 int main(int, char**)
 {
-    if (pledge("stdio video thread sendfd recvfd accept rpath wpath cpath unix proc fattr sigaction", nullptr) < 0) {
+    if (pledge("stdio video thread sendfd recvfd accept rpath wpath cpath unix proc sigaction", nullptr) < 0) {
         perror("pledge");
         return 1;
     }
@@ -61,6 +61,12 @@ int main(int, char**)
     VERIFY(theme.is_valid());
     Gfx::set_system_theme(theme);
     auto palette = Gfx::PaletteImpl::create_with_anonymous_buffer(theme);
+
+    auto default_font_query = wm_config->read_entry("Fonts", "Default", "Katica 10 400");
+    auto fixed_width_font_query = wm_config->read_entry("Fonts", "FixedWidth", "Csilla 10 400");
+
+    Gfx::FontDatabase::set_default_font_query(default_font_query);
+    Gfx::FontDatabase::set_fixed_width_font_query(fixed_width_font_query);
 
     WindowServer::EventLoop loop;
 

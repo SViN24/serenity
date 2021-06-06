@@ -23,6 +23,7 @@
     M(Convert, "Cannot convert {} to {}")                                                                                               \
     M(ConvertUndefinedToObject, "Cannot convert undefined to object")                                                                   \
     M(DescChangeNonConfigurable, "Cannot change attributes of non-configurable property '{}'")                                          \
+    M(DescWriteNonWritable, "Cannot write to non-writable property '{}'")                                                               \
     M(DivisionByZero, "Division by zero")                                                                                               \
     M(FunctionArgsNotObject, "Argument array must be an object")                                                                        \
     M(GetCapabilitiesExecutorCalledMultipleTimes, "GetCapabilitiesExecutor was called multiple times")                                  \
@@ -52,7 +53,7 @@
     M(NotASymbol, "{} is not a symbol")                                                                                                 \
     M(NotIterable, "{} is not iterable")                                                                                                \
     M(NonExtensibleDefine, "Cannot define property {} on non-extensible object")                                                        \
-    M(NumberIncompatibleThis, "Number.prototype.{} method called with incompatible this target")                                        \
+    M(NumberIncompatibleThis, "Number.prototype.{}() called with incompatible this target")                                             \
     M(ObjectDefinePropertyReturnedFalse, "Object's [[DefineProperty]] method returned false")                                           \
     M(ObjectFreezeFailed, "Could not freeze object")                                                                                    \
     M(ObjectSealFailed, "Could not seal object")                                                                                        \
@@ -138,6 +139,8 @@
     M(ReflectBadNewTarget, "Optional third argument of Reflect.construct() must be a constructor")                                      \
     M(ReflectBadDescriptorArgument, "Descriptor argument is not an object")                                                             \
     M(RegExpCompileError, "RegExp compile error: {}")                                                                                   \
+    M(RegExpObjectBadFlag, "Invalid RegExp flag '{}'")                                                                                  \
+    M(RegExpObjectRepeatedFlag, "Repeated RegExp flag '{}'")                                                                            \
     M(StringRawCannotConvert, "Cannot convert property 'raw' to object from {}")                                                        \
     M(StringRepeatCountMustBe, "repeat count must be a {} number")                                                                      \
     M(ThisHasNotBeenInitialized, "|this| has not been initialized")                                                                     \

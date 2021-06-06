@@ -141,6 +141,8 @@ RoutingDecision route_to(const IPv4Address& target, const IPv4Address& source, c
         return { adapter, mac };
     };
 
+    if (target[0] == 0 && target[1] == 0 && target[2] == 0 && target[3] == 0)
+        return if_matches(LoopbackAdapter::the(), LoopbackAdapter::the().mac_address());
     if (target[0] == 127)
         return if_matches(LoopbackAdapter::the(), LoopbackAdapter::the().mac_address());
 
@@ -150,9 +152,17 @@ RoutingDecision route_to(const IPv4Address& target, const IPv4Address& source, c
     RefPtr<NetworkAdapter> local_adapter = nullptr;
     RefPtr<NetworkAdapter> gateway_adapter = nullptr;
 
-    NetworkAdapter::for_each([source_addr, &target_addr, &local_adapter, &gateway_adapter, &matches](auto& adapter) {
+    NetworkAdapter::for_each([source_addr, &target_addr, &local_adapter, &gateway_adapter, &matches, &through](auto& adapter) {
         auto adapter_addr = adapter.ipv4_address().to_u32();
         auto adapter_mask = adapter.ipv4_netmask().to_u32();
+
+        if (target_addr == adapter_addr) {
+            local_adapter = LoopbackAdapter::the();
+            return;
+        }
+
+        if (!adapter.link_up() || (adapter_addr == 0 && !through))
+            return;
 
         if (source_addr != 0 && source_addr != adapter_addr)
             return;
@@ -202,6 +212,9 @@ RoutingDecision route_to(const IPv4Address& target, const IPv4Address& source, c
     //        a broadcast to a subnet rather than a full broadcast.
     if (target_addr == 0xffffffff && matches(adapter))
         return { adapter, { 0xff, 0xff, 0xff, 0xff, 0xff, 0xff } };
+
+    if (adapter == LoopbackAdapter::the())
+        return { adapter, adapter->mac_address() };
 
     if ((target_addr & IPv4Address { 240, 0, 0, 0 }.to_u32()) == IPv4Address { 224, 0, 0, 0 }.to_u32())
         return { adapter, multicast_ethernet_address(target) };

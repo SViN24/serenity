@@ -12,6 +12,7 @@
 #include "Screen.h"
 #include "Window.h"
 #include "WindowManager.h"
+#include <AK/CharacterTypes.h>
 #include <LibGfx/Bitmap.h>
 #include <LibGfx/CharacterBitmap.h>
 #include <LibGfx/Font.h>
@@ -20,7 +21,6 @@
 #include <LibGfx/Triangle.h>
 #include <WindowServer/ClientConnection.h>
 #include <WindowServer/WindowClientEndpoint.h>
-#include <ctype.h>
 
 namespace WindowServer {
 
@@ -94,7 +94,7 @@ int Menu::content_width() const
     for (auto& item : m_items) {
         if (item.type() != MenuItem::Text)
             continue;
-        auto& use_font = item.is_default() ? Gfx::FontDatabase::default_bold_font() : font();
+        auto& use_font = item.is_default() ? font().bold_variant() : font();
         int text_width = use_font.width(Gfx::parse_ampersand_string(item.text()));
         if (!item.shortcut_text().is_empty()) {
             int shortcut_width = use_font.width(item.shortcut_text());
@@ -245,7 +245,7 @@ void Menu::draw()
             }
             auto& previous_font = painter.font();
             if (item.is_default())
-                painter.set_font(Gfx::FontDatabase::default_bold_font());
+                painter.set_font(previous_font.bold_variant());
             painter.draw_ui_text(text_rect, item.text(), painter.font(), Gfx::TextAlignment::CenterLeft, text_color);
             if (!item.shortcut_text().is_empty()) {
                 painter.draw_text(item.rect().translated(-right_padding(), 0), item.shortcut_text(), Gfx::TextAlignment::CenterRight, text_color);
@@ -588,6 +588,8 @@ void Menu::do_popup(const Gfx::IntPoint& position, bool make_input, bool as_subm
 
     if (adjusted_pos.x() + window.width() >= Screen::the().width() - margin) {
         adjusted_pos = adjusted_pos.translated(-window.width(), 0);
+    } else {
+        adjusted_pos.set_x(adjusted_pos.x() + 1);
     }
     if (adjusted_pos.y() + window.height() >= Screen::the().height() - margin) {
         adjusted_pos = adjusted_pos.translated(0, -min(window.height(), adjusted_pos.y()));
@@ -629,14 +631,14 @@ void Menu::set_visible(bool visible)
 void Menu::add_item(NonnullOwnPtr<MenuItem> item)
 {
     if (auto alt_shortcut = find_ampersand_shortcut_character(item->text())) {
-        m_alt_shortcut_character_to_item_indices.ensure(tolower(alt_shortcut)).append(m_items.size());
+        m_alt_shortcut_character_to_item_indices.ensure(to_ascii_lowercase(alt_shortcut)).append(m_items.size());
     }
     m_items.append(move(item));
 }
 
 const Vector<size_t>* Menu::items_with_alt_shortcut(u32 alt_shortcut) const
 {
-    auto it = m_alt_shortcut_character_to_item_indices.find(tolower(alt_shortcut));
+    auto it = m_alt_shortcut_character_to_item_indices.find(to_ascii_lowercase(alt_shortcut));
     if (it == m_alt_shortcut_character_to_item_indices.end())
         return nullptr;
     return &it->value;
@@ -656,6 +658,11 @@ void Menu::set_hovered_index(int index, bool make_input)
         if (client())
             client()->async_menu_item_entered(m_menu_id, new_hovered_item->identifier());
     }
+}
+
+bool Menu::is_open() const
+{
+    return MenuManager::the().is_open(*this);
 }
 
 }

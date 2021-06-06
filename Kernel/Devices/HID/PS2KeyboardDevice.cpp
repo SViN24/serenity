@@ -15,7 +15,8 @@
 #include <Kernel/Devices/HID/HIDManagement.h>
 #include <Kernel/Devices/HID/PS2KeyboardDevice.h>
 #include <Kernel/IO.h>
-#include <Kernel/TTY/VirtualConsole.h>
+#include <Kernel/TTY/ConsoleManagement.h>
+#include <Kernel/WorkQueue.h>
 
 namespace Kernel {
 
@@ -35,6 +36,7 @@ void PS2KeyboardDevice::irq_handle_byte_read(u8 byte)
 
     if (m_modifiers == (Mod_Alt | Mod_Shift) && byte == 0x58) {
         // Alt+Shift+F12 pressed, dump some kernel state to the debug console.
+        ConsoleManagement::the().switch_to_debug();
         Scheduler::dump_scheduler_state();
     }
 
@@ -68,8 +70,10 @@ void PS2KeyboardDevice::irq_handle_byte_read(u8 byte)
     default:
         if (m_modifiers & Mod_Alt) {
             switch (ch) {
-            case 0x02 ... 0x07: // 1 to 6
-                VirtualConsole::switch_to(ch - 0x02);
+            case 0x02 ... 0x01 + ConsoleManagement::s_max_virtual_consoles:
+                g_io_work->queue([this, ch]() {
+                    ConsoleManagement::the().switch_to(ch - 0x02);
+                });
                 break;
             default:
                 key_state_changed(ch, pressed);

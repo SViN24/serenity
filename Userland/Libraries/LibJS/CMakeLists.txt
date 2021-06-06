@@ -1,7 +1,8 @@
 set(SOURCES
     AST.cpp
     Console.cpp
-    Heap/Allocator.cpp
+    Heap/CellAllocator.cpp
+    Heap/BlockAllocator.cpp
     Heap/Handle.cpp
     Heap/HeapBlock.cpp
     Heap/Heap.cpp
@@ -25,7 +26,6 @@ set(SOURCES
     Runtime/BooleanObject.cpp
     Runtime/BooleanPrototype.cpp
     Runtime/BoundFunction.cpp
-    Runtime/Cell.cpp
     Runtime/ConsoleObject.cpp
     Runtime/DateConstructor.cpp
     Runtime/Date.cpp
@@ -83,7 +83,6 @@ set(SOURCES
     Runtime/TypedArray.cpp
     Runtime/TypedArrayConstructor.cpp
     Runtime/TypedArrayPrototype.cpp
-    Runtime/Uint8ClampedArray.cpp
     Runtime/VM.cpp
     Runtime/Value.cpp
     Runtime/WithScope.cpp
@@ -93,6 +92,3 @@ set(SOURCES
 
 serenity_lib(LibJS js)
 target_link_libraries(LibJS LibM LibCore LibCrypto LibRegex LibSyntax)
-
-serenity_add_precompiled_header_to_target(LibJS ${CMAKE_CURRENT_SOURCE_DIR}/Heap/Heap.h)
-serenity_add_precompiled_header_to_target(LibJS ${CMAKE_CURRENT_SOURCE_DIR}/Runtime/GlobalObject.h)

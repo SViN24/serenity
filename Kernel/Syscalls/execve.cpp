@@ -172,7 +172,7 @@ static KResultOr<RequiredLoadRange> get_required_load_range(FileDescription& pro
     RequiredLoadRange range {};
     elf_image.for_each_program_header([&range](const auto& pheader) {
         if (pheader.type() != PT_LOAD)
-            return IterationDecision::Continue;
+            return;
 
         auto region_start = (FlatPtr)pheader.vaddr().as_ptr();
         auto region_end = region_start + pheader.size_in_memory();
@@ -180,7 +180,6 @@ static KResultOr<RequiredLoadRange> get_required_load_range(FileDescription& pro
             range.start = region_start;
         if (range.end == 0 || region_end > range.end)
             range.end = region_end;
-        return IterationDecision::Continue;
     });
 
     VERIFY(range.end > range.start);
@@ -507,6 +506,7 @@ KResult Process::do_exec(NonnullRefPtr<FileDescription> main_program_description
     Locker ptrace_locker(ptrace_lock());
 
     // Disable profiling temporarily in case it's running on this process.
+    auto was_profiling = m_profiling;
     TemporaryChange profiling_disabler(m_profiling, false);
 
     kill_threads_except_self();
@@ -531,7 +531,13 @@ KResult Process::do_exec(NonnullRefPtr<FileDescription> main_program_description
 
     set_dumpable(!executable_is_setid);
 
-    m_space = load_result.space.release_nonnull();
+    {
+        // We must disable global profiling (especially kfree tracing) here because
+        // we might otherwise end up walking the stack into the process' space that
+        // is about to be destroyed.
+        TemporaryChange global_profiling_disabler(g_profiling_all_threads, false);
+        m_space = load_result.space.release_nonnull();
+    }
     MemoryManager::enter_space(*m_space);
 
     auto signal_trampoline_region = m_space->allocate_region_with_vmobject(signal_trampoline_range.value(), g_signal_trampoline_region->vmobject(), 0, "Signal trampoline", PROT_READ | PROT_EXEC, true);
@@ -640,7 +646,10 @@ KResult Process::do_exec(NonnullRefPtr<FileDescription> main_program_description
     tss.cr3 = space().page_directory().cr3();
     tss.ss2 = pid().value();
 
-    PerformanceManager::add_process_exec_event(*this);
+    {
+        TemporaryChange profiling_disabler(m_profiling, was_profiling);
+        PerformanceManager::add_process_exec_event(*this);
+    }
 
     {
         ScopedSpinLock lock(g_scheduler_lock);
@@ -818,6 +827,9 @@ KResult Process::exec(String path, Vector<String> arguments, Vector<String> envi
     auto description = file_or_error.release_value();
     auto metadata = description->metadata();
 
+    if (!metadata.is_regular_file())
+        return EACCES;
+
     // Always gonna need at least 3 bytes. these are for #!X
     if (metadata.size < 3)
         return ENOEXEC;
@@ -911,7 +923,7 @@ KResultOr<int> Process::sys$execve(Userspace<const Syscall::SC_execve_params*> u
         auto path_arg = get_syscall_path_argument(params.path);
         if (path_arg.is_error())
             return path_arg.error();
-        path = path_arg.value();
+        path = path_arg.value()->view();
     }
 
     auto copy_user_strings = [](const auto& list, auto& output) {

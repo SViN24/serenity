@@ -12,7 +12,6 @@
 #include <Kernel/PCI/Access.h>
 #include <Kernel/PCI/Device.h>
 #include <Kernel/VM/MemoryManager.h>
-#include <Kernel/VM/ScatterGatherList.h>
 #include <Kernel/VirtIO/VirtIOQueue.h>
 
 namespace Kernel {
@@ -158,7 +157,7 @@ protected:
     auto mapping_for_bar(u8) -> MappedMMIO&;
 
     u8 read_status_bits();
-    void clear_status_bit(u8);
+    void mask_status_bits(u8 status_mask);
     void set_status_bit(u8);
     u64 get_device_features();
     bool setup_queues(u16 requested_queue_count = 0);
@@ -196,7 +195,7 @@ protected:
         return is_feature_set(m_accepted_features, feature);
     }
 
-    void supply_buffer_and_notify(u16 queue_index, const ScatterGatherList&, BufferType, void* token);
+    void supply_chain_and_notify(u16 queue_index, VirtIOQueueChain& chain);
 
     virtual bool handle_device_config_change() = 0;
     virtual void handle_queue_update(u16 queue_index) = 0;

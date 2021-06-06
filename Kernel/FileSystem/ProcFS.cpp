@@ -9,10 +9,11 @@
 #include <AK/JsonObjectSerializer.h>
 #include <AK/JsonValue.h>
 #include <AK/ScopeGuard.h>
+#include <AK/UBSanitizer.h>
 #include <Kernel/Arch/x86/CPU.h>
 #include <Kernel/Arch/x86/ProcessorInfo.h>
 #include <Kernel/CommandLine.h>
-#include <Kernel/Console.h>
+#include <Kernel/ConsoleDevice.h>
 #include <Kernel/DMI.h>
 #include <Kernel/Debug.h>
 #include <Kernel/Devices/BlockDevice.h>
@@ -38,7 +39,6 @@
 #include <Kernel/Scheduler.h>
 #include <Kernel/StdLib.h>
 #include <Kernel/TTY/TTY.h>
-#include <Kernel/UBSanitizer.h>
 #include <Kernel/VM/AnonymousVMObject.h>
 #include <Kernel/VM/MemoryManager.h>
 #include <LibC/errno_numbers.h>
@@ -234,9 +234,9 @@ struct ProcFSInodeData : public FileDescriptionData {
     RefPtr<KBufferImpl> buffer;
 };
 
-NonnullRefPtr<ProcFS> ProcFS::create()
+RefPtr<ProcFS> ProcFS::create()
 {
-    return adopt_ref(*new ProcFS);
+    return adopt_ref_if_nonnull(new ProcFS);
 }
 
 ProcFS::~ProcFS()
@@ -653,7 +653,7 @@ static bool procfs$self(InodeIdentifier, KBufferBuilder& builder)
 static bool procfs$dmesg(InodeIdentifier, KBufferBuilder& builder)
 {
     InterruptDisabler disabler;
-    for (char ch : Console::the().logbuffer())
+    for (char ch : ConsoleDevice::the().logbuffer())
         builder.append(ch);
     return true;
 }
@@ -688,7 +688,7 @@ static bool procfs$cpuinfo(InodeIdentifier, KBufferBuilder& builder)
 {
     JsonArraySerializer array { builder };
     Processor::for_each(
-        [&](Processor& proc) -> IterationDecision {
+        [&](Processor& proc) {
             auto& info = proc.info();
             auto obj = array.add_object();
             JsonArray features;
@@ -702,7 +702,6 @@ static bool procfs$cpuinfo(InodeIdentifier, KBufferBuilder& builder)
             obj.add("stepping", info.stepping());
             obj.add("type", info.type());
             obj.add("brandstr", info.brandstr());
-            return IterationDecision::Continue;
         });
     array.finish();
     return true;
@@ -826,7 +825,6 @@ static bool procfs$all(InodeIdentifier, KBufferBuilder& builder)
             thread_object.add("unix_socket_write_bytes", thread.unix_socket_write_bytes());
             thread_object.add("ipv4_socket_read_bytes", thread.ipv4_socket_read_bytes());
             thread_object.add("ipv4_socket_write_bytes", thread.ipv4_socket_write_bytes());
-            return IterationDecision::Continue;
         });
     };
 
@@ -903,17 +901,17 @@ static ssize_t write_sys_bool(InodeIdentifier inode_id, const UserOrKernelBuffer
 
     char value = 0;
     bool did_read = false;
-    ssize_t nread = buffer.read_buffered<1>(1, [&](const u8* data, size_t) {
+    auto result = buffer.read_buffered<1>(1, [&](u8 const* data, size_t) {
         if (did_read)
             return 0;
         value = (char)data[0];
         did_read = true;
         return 1;
     });
-    if (nread < 0)
-        return nread;
-    VERIFY(nread == 0 || (nread == 1 && did_read));
-    if (nread == 0 || !(value == '0' || value == '1'))
+    if (result.is_error())
+        return result.error();
+    VERIFY(result.value() == 0 || (result.value() == 1 && did_read));
+    if (result.value() == 0 || !(value == '0' || value == '1'))
         return (ssize_t)size;
 
     auto* lockable_bool = reinterpret_cast<Lockable<bool>*>(variable.address);
@@ -980,9 +978,9 @@ bool ProcFS::initialize()
             g_dump_kmalloc_stacks = kmalloc_stack_helper->resource();
         });
         ubsan_deadly_helper = new Lockable<bool>();
-        ubsan_deadly_helper->resource() = UBSanitizer::g_ubsan_is_deadly;
+        ubsan_deadly_helper->resource() = AK::UBSanitizer::g_ubsan_is_deadly;
         ProcFS::add_sys_bool("ubsan_is_deadly", *ubsan_deadly_helper, [] {
-            UBSanitizer::g_ubsan_is_deadly = ubsan_deadly_helper->resource();
+            AK::UBSanitizer::g_ubsan_is_deadly = ubsan_deadly_helper->resource();
         });
         caps_lock_to_ctrl_helper = new Lockable<bool>();
         ProcFS::add_sys_bool("caps_lock_to_ctrl", *caps_lock_to_ctrl_helper, [] {
@@ -1017,10 +1015,12 @@ RefPtr<Inode> ProcFS::get_inode(InodeIdentifier inode_id) const
         // and if that fails we cannot return this instance anymore and just
         // create a new one.
         if (it->value->try_ref())
-            return adopt_ref(*it->value);
+            return adopt_ref_if_nonnull(it->value);
         // We couldn't ref it, so just create a new one and replace the entry
     }
-    auto inode = adopt_ref(*new ProcFSInode(const_cast<ProcFS&>(*this), inode_id.index()));
+    auto inode = adopt_ref_if_nonnull(new ProcFSInode(const_cast<ProcFS&>(*this), inode_id.index()));
+    if (!inode)
+        return {};
     auto result = m_inodes.set(inode_id.index().value(), inode.ptr());
     VERIFY(result == ((it == m_inodes.end()) ? AK::HashSetResult::InsertedNewEntry : AK::HashSetResult::ReplacedExistingEntry));
     return inode;
@@ -1104,7 +1104,7 @@ KResult ProcFSInode::refresh_data(FileDescription& description) const
     }
 
     if (!cached_data)
-        cached_data = new ProcFSInodeData;
+        cached_data = adopt_own_if_nonnull(new ProcFSInodeData);
     auto& buffer = static_cast<ProcFSInodeData&>(*cached_data).buffer;
     if (buffer) {
         // If we're reusing the buffer, reset the size to 0 first. This
@@ -1328,10 +1328,9 @@ KResult ProcFSInode::traverse_as_directory(Function<bool(const FS::DirectoryEntr
         auto process = Process::from_pid(pid);
         if (!process)
             return ENOENT;
-        process->for_each_thread([&](const Thread& thread) -> IterationDecision {
+        process->for_each_thread([&](const Thread& thread) {
             int tid = thread.tid().value();
             callback({ String::number(tid), to_identifier_with_stack(fsid(), tid), 0 });
-            return IterationDecision::Continue;
         });
     } break;
 
@@ -1540,7 +1539,7 @@ KResultOr<NonnullRefPtr<Custody>> ProcFSInode::resolve_as_link(Custody& base, Re
         if (!description)
             return ENOENT;
         auto proxy_inode = ProcFSProxyInode::create(const_cast<ProcFS&>(fs()), *description);
-        return Custody::create(&base, "", proxy_inode, base.mount_flags());
+        return Custody::try_create(&base, "", proxy_inode, base.mount_flags());
     }
 
     Custody* res = nullptr;

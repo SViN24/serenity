@@ -34,11 +34,7 @@ public:
         : IPC::ServerConnection<LanguageClientEndpoint, LanguageServerEndpoint>(*this, socket)
     {
         m_project_path = project_path;
-    }
-
-    virtual void handshake() override
-    {
-        greet(m_project_path);
+        async_greet(m_project_path);
     }
 
     WeakPtr<LanguageClient> language_client() { return m_current_language_client; }
@@ -128,7 +124,6 @@ public:
     virtual void insert_text(const String& path, const String& text, size_t line, size_t column);
     virtual void remove_text(const String& path, size_t from_line, size_t from_column, size_t to_line, size_t to_column);
     virtual void request_autocomplete(const String& path, size_t cursor_line, size_t cursor_column);
-    virtual void set_autocomplete_mode(const String& mode);
     virtual void search_declaration(const String& path, size_t line, size_t column);
 
     void provide_autocomplete_suggestions(const Vector<GUI::AutocompleteProvider::Entry>&) const;

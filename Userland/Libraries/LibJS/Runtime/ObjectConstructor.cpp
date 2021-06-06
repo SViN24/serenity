@@ -45,6 +45,7 @@ void ObjectConstructor::initialize(GlobalObject& global_object)
     define_native_function(vm.names.values, values, 1, attr);
     define_native_function(vm.names.entries, entries, 1, attr);
     define_native_function(vm.names.create, create, 2, attr);
+    define_native_function(vm.names.hasOwn, has_own, 2, attr);
 }
 
 ObjectConstructor::~ObjectConstructor()
@@ -201,14 +202,14 @@ JS_DEFINE_NATIVE_FUNCTION(ObjectConstructor::define_property_)
         vm.throw_exception<TypeError>(global_object, ErrorType::NotAnObject, "Object argument");
         return {};
     }
+    auto property_key = vm.argument(1).to_property_key(global_object);
+    if (vm.exception())
+        return {};
     if (!vm.argument(2).is_object()) {
         vm.throw_exception<TypeError>(global_object, ErrorType::NotAnObject, "Descriptor argument");
         return {};
     }
     auto& object = vm.argument(0).as_object();
-    auto property_key = StringOrSymbol::from_value(global_object, vm.argument(1));
-    if (vm.exception())
-        return {};
     auto& descriptor = vm.argument(2).as_object();
     if (!object.define_property(property_key, descriptor)) {
         if (!vm.exception()) {
@@ -308,6 +309,17 @@ JS_DEFINE_NATIVE_FUNCTION(ObjectConstructor::create)
             return {};
     }
     return object;
+}
+
+JS_DEFINE_NATIVE_FUNCTION(ObjectConstructor::has_own)
+{
+    auto* object = vm.argument(0).to_object(global_object);
+    if (vm.exception())
+        return {};
+    auto property_key = vm.argument(1).to_property_key(global_object);
+    if (vm.exception())
+        return {};
+    return Value(object->has_own_property(property_key));
 }
 
 }

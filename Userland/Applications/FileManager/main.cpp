@@ -65,7 +65,7 @@ static bool add_launch_handler_actions_to_menu(RefPtr<GUI::Menu>& menu, const Di
 
 int main(int argc, char** argv)
 {
-    if (pledge("stdio thread recvfd sendfd accept unix cpath rpath wpath fattr proc exec sigaction", nullptr) < 0) {
+    if (pledge("stdio thread recvfd sendfd unix cpath rpath wpath fattr proc exec sigaction", nullptr) < 0) {
         perror("pledge");
         return 1;
     }
@@ -93,7 +93,7 @@ int main(int argc, char** argv)
 
     auto app = GUI::Application::construct(argc, argv);
 
-    if (pledge("stdio thread recvfd sendfd accept cpath rpath wpath fattr proc exec unix", nullptr) < 0) {
+    if (pledge("stdio thread recvfd sendfd cpath rpath wpath fattr proc exec unix", nullptr) < 0) {
         perror("pledge");
         return 1;
     }
@@ -352,7 +352,7 @@ int run_in_desktop_mode([[maybe_unused]] RefPtr<Core::ConfigFile> config)
 
     auto desktop_view_context_menu = GUI::Menu::construct("Directory View");
 
-    auto file_manager_action = GUI::Action::create("Show in &File Manager", {}, Gfx::Bitmap::load_from_file("/res/icons/16x16/app-file-manager.png"), [&](const GUI::Action&) {
+    auto file_manager_action = GUI::Action::create("Show in File &Manager", {}, Gfx::Bitmap::load_from_file("/res/icons/16x16/app-file-manager.png"), [&](const GUI::Action&) {
         Desktop::Launcher::open(URL::create_with_file_protocol(directory_view.path()));
     });
 
@@ -790,7 +790,7 @@ int run_in_windowed_mode(RefPtr<Core::ConfigFile> config, String initial_locatio
     });
     focus_dependent_delete_action->set_enabled(false);
 
-    auto mkdir_action = GUI::Action::create("New &Directory...", { Mod_Ctrl | Mod_Shift, Key_N }, Gfx::Bitmap::load_from_file("/res/icons/16x16/mkdir.png"), [&](const GUI::Action&) {
+    auto mkdir_action = GUI::Action::create("&New Directory...", { Mod_Ctrl | Mod_Shift, Key_N }, Gfx::Bitmap::load_from_file("/res/icons/16x16/mkdir.png"), [&](const GUI::Action&) {
         directory_view.mkdir_action().activate();
         refresh_tree_view();
     });
@@ -805,11 +805,7 @@ int run_in_windowed_mode(RefPtr<Core::ConfigFile> config, String initial_locatio
     auto& file_menu = menubar->add_menu("&File");
     file_menu.add_action(mkdir_action);
     file_menu.add_action(touch_action);
-    file_menu.add_action(copy_action);
-    file_menu.add_action(cut_action);
-    file_menu.add_action(paste_action);
     file_menu.add_action(focus_dependent_delete_action);
-    file_menu.add_action(directory_view.open_terminal_action());
     file_menu.add_separator();
     file_menu.add_action(properties_action);
     file_menu.add_separator();
@@ -817,7 +813,14 @@ int run_in_windowed_mode(RefPtr<Core::ConfigFile> config, String initial_locatio
         GUI::Application::the()->quit();
     }));
 
-    auto action_show_dotfiles = GUI::Action::create_checkable("Show &Dotfiles", { Mod_Ctrl, Key_H }, [&](auto& action) {
+    auto& edit_menu = menubar->add_menu("&Edit");
+    edit_menu.add_action(copy_action);
+    edit_menu.add_action(cut_action);
+    edit_menu.add_action(paste_action);
+    edit_menu.add_separator();
+    edit_menu.add_action(select_all_action);
+
+    auto action_show_dotfiles = GUI::Action::create_checkable("&Show Dotfiles", { Mod_Ctrl, Key_H }, [&](auto& action) {
         directory_view.set_should_show_dotfiles(action.is_checked());
         refresh_tree_view();
         config->write_bool_entry("DirectoryView", "ShowDotFiles", action.is_checked());
@@ -857,6 +860,8 @@ int run_in_windowed_mode(RefPtr<Core::ConfigFile> config, String initial_locatio
     go_menu.add_action(open_parent_directory_action);
     go_menu.add_action(go_home_action);
     go_menu.add_action(go_to_location_action);
+    go_menu.add_separator();
+    go_menu.add_action(directory_view.open_terminal_action());
 
     auto& help_menu = menubar->add_menu("&Help");
     help_menu.add_action(GUI::CommonActions::make_about_action("File Manager", GUI::Icon::default_icon("app-file-manager"), window));
@@ -871,10 +876,14 @@ int run_in_windowed_mode(RefPtr<Core::ConfigFile> config, String initial_locatio
     main_toolbar.add_separator();
     main_toolbar.add_action(mkdir_action);
     main_toolbar.add_action(touch_action);
+    main_toolbar.add_action(focus_dependent_delete_action);
+
+    main_toolbar.add_separator();
     main_toolbar.add_action(copy_action);
     main_toolbar.add_action(cut_action);
     main_toolbar.add_action(paste_action);
-    main_toolbar.add_action(focus_dependent_delete_action);
+
+    main_toolbar.add_separator();
     main_toolbar.add_action(directory_view.open_terminal_action());
 
     main_toolbar.add_separator();
@@ -1040,7 +1049,8 @@ int run_in_windowed_mode(RefPtr<Core::ConfigFile> config, String initial_locatio
         }
     };
 
-    tree_view.on_selection = [&](const GUI::ModelIndex& index) {
+    tree_view.on_selection_change = [&] {
+        const auto& index = tree_view.selection().first();
         if (directories_model->m_previously_selected_index.is_valid())
             directories_model->update_node_on_selection(directories_model->m_previously_selected_index, false);
 
@@ -1114,14 +1124,14 @@ int run_in_windowed_mode(RefPtr<Core::ConfigFile> config, String initial_locatio
         go_to_location_action->activate();
     };
 
-    tree_view.on_drop = [&](const GUI::ModelIndex& index, GUI::DropEvent& event) {
+    tree_view.on_drop = [&](const GUI::ModelIndex& index, const GUI::DropEvent& event) {
         if (!event.mime_data().has_urls())
             return;
         auto& target_node = directories_model->node(index);
         if (!target_node.is_directory())
             return;
         copy_urls_to_directory(event.mime_data().urls(), target_node.full_path());
-        event.accept();
+        const_cast<GUI::DropEvent&>(event).accept();
     };
 
     directory_view.open(initial_location);

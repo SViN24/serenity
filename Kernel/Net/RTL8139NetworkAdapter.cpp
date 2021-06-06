@@ -107,7 +107,7 @@ namespace Kernel {
 
 UNMAP_AFTER_INIT void RTL8139NetworkAdapter::detect()
 {
-    static const PCI::ID rtl8139_id = { 0x10EC, 0x8139 };
+    constexpr PCI::ID rtl8139_id = { 0x10EC, 0x8139 };
     PCI::enumerate([&](const PCI::Address& address, PCI::ID id) {
         if (address.is_null())
             return;
@@ -125,7 +125,7 @@ UNMAP_AFTER_INIT RTL8139NetworkAdapter::RTL8139NetworkAdapter(PCI::Address addre
     , m_packet_buffer(MM.allocate_contiguous_kernel_region(page_round_up(PACKET_SIZE_MAX), "RTL8139 Packet buffer", Region::Access::Read | Region::Access::Write))
 {
     m_tx_buffers.ensure_capacity(RTL8139_TX_BUFFER_COUNT);
-    set_interface_name("rtl8139");
+    set_interface_name(address);
 
     dmesgln("RTL8139: Found @ {}", pci_address());
 

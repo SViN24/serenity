@@ -115,11 +115,11 @@ public:
     String title() const;
     void set_title(const String&);
 
-    void attach_to_frame(Badge<Frame>, Frame&);
-    void detach_from_frame(Badge<Frame>, Frame&);
+    void attach_to_browsing_context(Badge<BrowsingContext>, BrowsingContext&);
+    void detach_from_browsing_context(Badge<BrowsingContext>, BrowsingContext&);
 
-    Frame* frame() { return m_frame.ptr(); }
-    const Frame* frame() const { return m_frame.ptr(); }
+    BrowsingContext* browsing_context() { return m_browsing_context.ptr(); }
+    const BrowsingContext* browsing_context() const { return m_browsing_context.ptr(); }
 
     Page* page();
     const Page* page() const;
@@ -237,13 +237,15 @@ public:
     const String& content_type() const { return m_content_type; }
     void set_content_type(const String& content_type) { m_content_type = content_type; }
 
-    const String& encoding() const { return m_encoding; }
-    void set_encoding(const String& encoding) { m_encoding = encoding; }
+    bool has_encoding() const { return m_encoding.has_value(); }
+    const Optional<String>& encoding() const { return m_encoding; }
+    String encoding_or_default() const { return m_encoding.value_or("UTF-8"); }
+    void set_encoding(const Optional<String>& encoding) { m_encoding = encoding; }
 
     // NOTE: These are intended for the JS bindings
-    const String& character_set() const { return encoding(); }
-    const String& charset() const { return encoding(); }
-    const String& input_encoding() const { return encoding(); }
+    String character_set() const { return encoding_or_default(); }
+    String charset() const { return encoding_or_default(); }
+    String input_encoding() const { return encoding_or_default(); }
 
     bool ready_for_post_load_tasks() const { return m_ready_for_post_load_tasks; }
     void set_ready_for_post_load_tasks(bool ready) { m_ready_for_post_load_tasks = ready; }
@@ -295,7 +297,7 @@ private:
     RefPtr<CSS::StyleSheetList> m_style_sheets;
     RefPtr<Node> m_hovered_node;
     RefPtr<Node> m_inspected_node;
-    WeakPtr<Frame> m_frame;
+    WeakPtr<BrowsingContext> m_browsing_context;
     URL m_url;
 
     RefPtr<Window> m_window;
@@ -327,7 +329,7 @@ private:
 
     String m_ready_state { "loading" };
     String m_content_type { "application/xml" };
-    String m_encoding { "UTF-8" };
+    Optional<String> m_encoding;
 
     bool m_ready_for_post_load_tasks { false };
 

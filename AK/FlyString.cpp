@@ -55,14 +55,22 @@ FlyString::FlyString(const String& string)
     }
 }
 
-FlyString::FlyString(const StringView& string)
-    : FlyString(static_cast<String>(string))
+FlyString::FlyString(StringView const& string)
 {
-}
-
-FlyString::FlyString(const char* string)
-    : FlyString(static_cast<String>(string))
-{
+    if (string.is_null())
+        return;
+    auto it = fly_impls().find(string.hash(), [&](auto& candidate) {
+        return string == candidate;
+    });
+    if (it == fly_impls().end()) {
+        auto new_string = string.to_string();
+        fly_impls().set(new_string.impl());
+        new_string.impl()->set_fly({}, true);
+        m_impl = new_string.impl();
+    } else {
+        VERIFY((*it)->is_fly());
+        m_impl = *it;
+    }
 }
 
 template<typename T>
@@ -105,11 +113,6 @@ bool FlyString::ends_with(const StringView& str, CaseSensitivity case_sensitivit
 FlyString FlyString::to_lowercase() const
 {
     return String(*m_impl).to_lowercase();
-}
-
-StringView FlyString::view() const
-{
-    return { characters(), length() };
 }
 
 bool FlyString::operator==(const String& other) const

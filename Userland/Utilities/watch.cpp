@@ -4,11 +4,13 @@
  * SPDX-License-Identifier: BSD-2-Clause
  */
 
+#include <AK/Assertions.h>
 #include <AK/String.h>
 #include <AK/StringBuilder.h>
 #include <AK/Time.h>
 #include <AK/Vector.h>
 #include <LibCore/ArgsParser.h>
+#include <errno.h>
 #include <spawn.h>
 #include <stdio.h>
 #include <sys/time.h>
@@ -128,17 +130,18 @@ int main(int argc, char** argv)
             usecs_to_sleep = usecs_from(now, next_run_time);
         }
         // Clear the screen, then reset the cursor position to the top left.
-        fprintf(stderr, "\033[H\033[2J");
+        warn("\033[H\033[2J");
         // Print the header.
         if (!flag_noheader) {
-            fprintf(stderr, "%s\n\n", header.characters());
+            warnln("{}", header);
+            warnln();
         } else {
             fflush(stderr);
         }
         if (run_command(command) != 0) {
             exit_code = 1;
             if (flag_beep_on_fail) {
-                fprintf(stderr, "\a");
+                warnln("\a");
                 fflush(stderr);
             }
         }

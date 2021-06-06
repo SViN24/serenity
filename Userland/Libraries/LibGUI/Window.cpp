@@ -23,7 +23,6 @@
 #include <LibGUI/WindowServerConnection.h>
 #include <LibGfx/Bitmap.h>
 #include <fcntl.h>
-#include <serenity.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <unistd.h>
@@ -655,11 +654,15 @@ void Window::set_focused_widget(Widget* widget, FocusSource source)
     WeakPtr<Widget> previously_focused_widget = m_focused_widget;
     m_focused_widget = widget;
 
+    if (!m_focused_widget && m_previously_focused_widget)
+        m_focused_widget = m_previously_focused_widget;
+
     if (previously_focused_widget) {
         Core::EventLoop::current().post_event(*previously_focused_widget, make<FocusEvent>(Event::FocusOut, source));
         previously_focused_widget->update();
         if (previously_focused_widget && previously_focused_widget->on_focus_change)
             previously_focused_widget->on_focus_change(previously_focused_widget->is_focused(), source);
+        m_previously_focused_widget = previously_focused_widget;
     }
     if (m_focused_widget) {
         Core::EventLoop::current().post_event(*m_focused_widget, make<FocusEvent>(Event::FocusIn, source));
@@ -744,7 +747,7 @@ void Window::set_hovered_widget(Widget* widget)
 void Window::set_current_backing_store(WindowBackingStore& backing_store, bool flush_immediately)
 {
     auto& bitmap = backing_store.bitmap();
-    WindowServerConnection::the().set_window_backing_store(m_window_id, 32, bitmap.pitch(), bitmap.anon_fd(), backing_store.serial(), bitmap.has_alpha_channel(), bitmap.size(), flush_immediately);
+    WindowServerConnection::the().set_window_backing_store(m_window_id, 32, bitmap.pitch(), bitmap.anonymous_buffer().fd(), backing_store.serial(), bitmap.has_alpha_channel(), bitmap.size(), flush_immediately);
 }
 
 void Window::flip(const Vector<Gfx::IntRect, 32>& dirty_rects)
@@ -777,16 +780,19 @@ OwnPtr<WindowBackingStore> Window::create_backing_store(const Gfx::IntSize& size
     size_t pitch = Gfx::Bitmap::minimum_pitch(size.width(), format);
     size_t size_in_bytes = size.height() * pitch;
 
-    auto anon_fd = anon_create(round_up_to_power_of_two(size_in_bytes, PAGE_SIZE), O_CLOEXEC);
-    if (anon_fd < 0) {
+    auto buffer = Core::AnonymousBuffer::create_with_size(round_up_to_power_of_two(size_in_bytes, PAGE_SIZE));
+    if (!buffer.is_valid()) {
         perror("anon_create");
         return {};
     }
 
     // FIXME: Plumb scale factor here eventually.
-    auto bitmap = Gfx::Bitmap::create_with_anon_fd(format, anon_fd, size, 1, {}, Gfx::Bitmap::ShouldCloseAnonymousFile::No);
-    if (!bitmap)
+    auto bitmap = Gfx::Bitmap::create_with_anonymous_buffer(format, buffer, size, 1, {});
+    if (!bitmap) {
+        VERIFY(size.width() <= INT16_MAX);
+        VERIFY(size.height() <= INT16_MAX);
         return {};
+    }
     return make<WindowBackingStore>(bitmap.release_nonnull());
 }
 

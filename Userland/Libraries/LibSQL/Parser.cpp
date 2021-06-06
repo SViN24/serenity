@@ -23,6 +23,9 @@ NonnullRefPtr<Statement> Parser::next_statement()
 
     if (match(TokenType::With)) {
         auto common_table_expression_list = parse_common_table_expression_list();
+        if (!common_table_expression_list)
+            return create_ast_node<ErrorStatement>();
+
         return terminate_statement(parse_statement_with_expression_list(move(common_table_expression_list)));
     }
 
@@ -318,11 +321,11 @@ NonnullRefPtr<Select> Parser::parse_select_statement(RefPtr<CommonTableExpressio
         RefPtr<Expression> offset_expression;
         if (consume_if(TokenType::Offset)) {
             offset_expression = parse_expression();
-        } else {
-            // Note: The limit clause may instead be definied as "offset-expression, limit-expression", effectively reversing the
+        } else if (consume_if(TokenType::Comma)) {
+            // Note: The limit clause may instead be defined as "offset-expression, limit-expression", effectively reversing the
             // order of the expressions. SQLite notes "this is counter-intuitive" and "to avoid confusion, programmers are strongly
             // encouraged to ... avoid using a LIMIT clause with a comma-separated offset."
-            VERIFY(!consume_if(TokenType::Comma));
+            syntax_error("LIMIT clauses of the form 'LIMIT <expr>, <expr>' are not supported");
         }
 
         limit_clause = create_ast_node<LimitClause>(move(limit_expression), move(offset_expression));
@@ -331,7 +334,7 @@ NonnullRefPtr<Select> Parser::parse_select_statement(RefPtr<CommonTableExpressio
     return create_ast_node<Select>(move(common_table_expression_list), select_all, move(result_column_list), move(table_or_subquery_list), move(where_clause), move(group_by_clause), move(ordering_term_list), move(limit_clause));
 }
 
-NonnullRefPtr<CommonTableExpressionList> Parser::parse_common_table_expression_list()
+RefPtr<CommonTableExpressionList> Parser::parse_common_table_expression_list()
 {
     consume(TokenType::With);
     bool recursive = consume_if(TokenType::Recursive);
@@ -339,11 +342,21 @@ NonnullRefPtr<CommonTableExpressionList> Parser::parse_common_table_expression_l
     NonnullRefPtrVector<CommonTableExpression> common_table_expression;
     parse_comma_separated_list(false, [&]() { common_table_expression.append(parse_common_table_expression()); });
 
+    if (common_table_expression.is_empty()) {
+        expected("Common table expression list");
+        return {};
+    }
+
     return create_ast_node<CommonTableExpressionList>(recursive, move(common_table_expression));
 }
 
 NonnullRefPtr<Expression> Parser::parse_expression()
 {
+    if (++m_parser_state.m_current_expression_depth > Limits::maximum_expression_tree_depth) {
+        syntax_error(String::formatted("Exceeded maximum expression tree depth of {}", Limits::maximum_expression_tree_depth));
+        return create_ast_node<ErrorExpression>();
+    }
+
     // https://sqlite.org/lang_expr.html
     auto expression = parse_primary_expression();
 
@@ -354,6 +367,7 @@ NonnullRefPtr<Expression> Parser::parse_expression()
     // FIXME: Parse 'function-name'.
     // FIXME: Parse 'raise-function'.
 
+    --m_parser_state.m_current_expression_depth;
     return expression;
 }
 
@@ -907,7 +921,7 @@ NonnullRefPtr<ResultColumn> Parser::parse_result_column()
         return create_ast_node<ResultColumn>();
 
     // If we match an identifier now, we don't know whether it is a table-name of the form "table-name.*", or if it is the start of a
-    // column-name-expression, until we try to parse the asterisk. So if we consume an indentifier and a period, but don't find an
+    // column-name-expression, until we try to parse the asterisk. So if we consume an identifier and a period, but don't find an
     // asterisk, hold onto that information to form a column-name-expression later.
     String table_name;
     bool parsed_period = false;

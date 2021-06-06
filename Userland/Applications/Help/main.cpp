@@ -36,17 +36,12 @@
 
 int main(int argc, char* argv[])
 {
-    if (pledge("stdio recvfd sendfd accept rpath unix cpath fattr", nullptr) < 0) {
+    if (pledge("stdio recvfd sendfd rpath unix", nullptr) < 0) {
         perror("pledge");
         return 1;
     }
 
     auto app = GUI::Application::construct(argc, argv);
-
-    if (pledge("stdio recvfd sendfd accept rpath unix", nullptr) < 0) {
-        perror("pledge");
-        return 1;
-    }
 
     if (unveil("/res", "r") < 0) {
         perror("unveil");
@@ -93,6 +88,7 @@ int main(int argc, char* argv[])
     auto& toolbar = toolbar_container.add<GUI::Toolbar>();
 
     auto& splitter = widget.add<GUI::HorizontalSplitter>();
+    splitter.layout()->set_spacing(5);
 
     auto model = ManualModel::create();
 
@@ -184,24 +180,25 @@ int main(int argc, char* argv[])
                 GUI::MessageBox::Type::Error);
         }
     };
-    search_list_view.on_selection = [&](auto index) {
+    search_list_view.on_selection_change = [&] {
+        const auto& index = search_list_view.selection().first();
         if (!index.is_valid())
             return;
 
-        if (auto model = search_list_view.model()) {
-            auto& search_model = *static_cast<GUI::FilteringProxyModel*>(model);
-            index = search_model.map(index);
-        } else {
+        auto view_model = search_list_view.model();
+        if (!view_model) {
             page_view.load_empty_document();
             return;
         }
-        String path = model->page_path(index);
+        auto& search_model = *static_cast<GUI::FilteringProxyModel*>(view_model);
+        const auto& mapped_index = search_model.map(index);
+        String path = model->page_path(mapped_index);
         if (path.is_null()) {
             page_view.load_empty_document();
             return;
         }
         tree_view.selection().clear();
-        tree_view.selection().add(index);
+        tree_view.selection().add(mapped_index);
         history.push(path);
         update_actions();
         open_page(path);
@@ -261,7 +258,7 @@ int main(int argc, char* argv[])
         GUI::Application::the()->quit();
     }));
 
-    auto& go_menu = menubar->add_menu("Go");
+    auto& go_menu = menubar->add_menu("&Go");
     go_menu.add_action(*go_back_action);
     go_menu.add_action(*go_forward_action);
     go_menu.add_action(*go_home_action);

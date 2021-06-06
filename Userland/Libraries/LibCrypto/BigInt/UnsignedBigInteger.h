@@ -15,13 +15,16 @@
 namespace Crypto {
 
 struct UnsignedDivisionResult;
-constexpr size_t STARTING_WORD_SIZE = 512;
+constexpr size_t STARTING_WORD_SIZE = 32;
 
 class UnsignedBigInteger {
 public:
-    UnsignedBigInteger(u32 x) { m_words.append(x); }
+    using Word = u32;
+    static constexpr size_t BITS_IN_WORD = 32;
 
-    explicit UnsignedBigInteger(Vector<u32, STARTING_WORD_SIZE>&& words)
+    UnsignedBigInteger(Word x) { m_words.append(x); }
+
+    explicit UnsignedBigInteger(Vector<Word, STARTING_WORD_SIZE>&& words)
         : m_words(move(words))
     {
     }
@@ -43,10 +46,10 @@ public:
     static UnsignedBigInteger from_base10(const String& str);
     String to_base10() const;
 
-    const Vector<u32, STARTING_WORD_SIZE>& words() const { return m_words; }
+    const Vector<Word, STARTING_WORD_SIZE>& words() const { return m_words; }
 
     void set_to_0();
-    void set_to(u32 other);
+    void set_to(Word other);
     void set_to(const UnsignedBigInteger& other);
 
     void invalidate()
@@ -55,6 +58,7 @@ public:
         m_cached_trimmed_length = {};
     }
 
+    bool is_odd() const { return m_words.size() && (m_words[0] & 1); }
     bool is_invalid() const { return m_is_invalid; }
 
     size_t length() const { return m_words.size(); }
@@ -62,6 +66,7 @@ public:
     size_t trimmed_length() const;
 
     void clamp_to_trimmed_length();
+    void resize_with_leading_zeros(size_t num_words);
 
     UnsignedBigInteger plus(const UnsignedBigInteger& other) const;
     UnsignedBigInteger minus(const UnsignedBigInteger& other) const;
@@ -75,29 +80,15 @@ public:
 
     void set_bit_inplace(size_t bit_index);
 
-    static void add_without_allocation(const UnsignedBigInteger& left, const UnsignedBigInteger& right, UnsignedBigInteger& output);
-    static void subtract_without_allocation(const UnsignedBigInteger& left, const UnsignedBigInteger& right, UnsignedBigInteger& output);
-    static void bitwise_or_without_allocation(const UnsignedBigInteger& left, const UnsignedBigInteger& right, UnsignedBigInteger& output);
-    static void bitwise_and_without_allocation(const UnsignedBigInteger& left, const UnsignedBigInteger& right, UnsignedBigInteger& output);
-    static void bitwise_xor_without_allocation(const UnsignedBigInteger& left, const UnsignedBigInteger& right, UnsignedBigInteger& output);
-    static void bitwise_not_without_allocation(const UnsignedBigInteger& left, UnsignedBigInteger& output);
-    static void shift_left_without_allocation(const UnsignedBigInteger& number, size_t bits_to_shift_by, UnsignedBigInteger& temp_result, UnsignedBigInteger& temp_plus, UnsignedBigInteger& output);
-    static void multiply_without_allocation(const UnsignedBigInteger& left, const UnsignedBigInteger& right, UnsignedBigInteger& temp_shift_result, UnsignedBigInteger& temp_shift_plus, UnsignedBigInteger& temp_shift, UnsignedBigInteger& temp_plus, UnsignedBigInteger& output);
-    static void divide_without_allocation(const UnsignedBigInteger& numerator, const UnsignedBigInteger& denominator, UnsignedBigInteger& temp_shift_result, UnsignedBigInteger& temp_shift_plus, UnsignedBigInteger& temp_shift, UnsignedBigInteger& temp_minus, UnsignedBigInteger& quotient, UnsignedBigInteger& remainder);
-    static void divide_u16_without_allocation(const UnsignedBigInteger& numerator, u32 denominator, UnsignedBigInteger& quotient, UnsignedBigInteger& remainder);
-
     bool operator==(const UnsignedBigInteger& other) const;
     bool operator!=(const UnsignedBigInteger& other) const;
     bool operator<(const UnsignedBigInteger& other) const;
 
 private:
-    ALWAYS_INLINE static void shift_left_by_n_words(const UnsignedBigInteger& number, size_t number_of_words, UnsignedBigInteger& output);
-    ALWAYS_INLINE static u32 shift_left_get_one_word(const UnsignedBigInteger& number, size_t num_bits, size_t result_word_index);
-
-    static constexpr size_t BITS_IN_WORD = 32;
+    friend class UnsignedBigIntegerAlgorithms;
     // Little endian
-    // m_word[0] + m_word[1] * 256 + m_word[2] * 65536 + ...
-    Vector<u32, STARTING_WORD_SIZE> m_words;
+    // m_word[0] + m_word[1] * Word::MAX + m_word[2] * Word::MAX * Word::MAX + ...
+    Vector<Word, STARTING_WORD_SIZE> m_words;
 
     // Used to indicate a negative result, or a result of an invalid operation
     bool m_is_invalid { false };

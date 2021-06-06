@@ -51,7 +51,9 @@ static KResultOr<u32> handle_ptrace(const Kernel::Syscall::SC_ptrace_params& par
         if (peer_process.tracer()) {
             return EBUSY;
         }
-        peer_process.start_tracing_from(caller.pid());
+        auto result = peer_process.start_tracing_from(caller.pid());
+        if (result.is_error())
+            return result.error();
         ScopedSpinLock lock(peer->get_lock());
         if (peer->state() != Thread::State::Stopped) {
             peer->send_signal(SIGSTOP, &caller);
@@ -199,7 +201,10 @@ KResult Process::poke_user_data(Userspace<u32*> address, u32 data)
         // If the region is shared, we change its vmobject to a PrivateInodeVMObject
         // to prevent the write operation from changing any shared inode data
         VERIFY(region->vmobject().is_shared_inode());
-        region->set_vmobject(PrivateInodeVMObject::create_with_inode(static_cast<SharedInodeVMObject&>(region->vmobject()).inode()));
+        auto vmobject = PrivateInodeVMObject::create_with_inode(static_cast<SharedInodeVMObject&>(region->vmobject()).inode());
+        if (!vmobject)
+            return ENOMEM;
+        region->set_vmobject(vmobject.release_nonnull());
         region->set_shared(false);
     }
     const bool was_writable = region->is_writable();

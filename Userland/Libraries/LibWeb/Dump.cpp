@@ -165,7 +165,9 @@ void dump_tree(StringBuilder& builder, const Layout::Node& layout_node, bool sho
         if (box.is_inline_block())
             builder.appendff(" {}inline-block{}", inline_block_color_on, color_off);
         if (box.computed_values().display() == CSS::Display::Flex)
-            builder.appendff(" {}flex{}", flex_color_on, color_off);
+            builder.appendff(" {}flex-container{}", flex_color_on, color_off);
+        if (box.is_flex_item())
+            builder.appendff(" {}flex-item{}", flex_color_on, color_off);
 
         if (show_box_model) {
             // Dump the horizontal box properties
@@ -354,6 +356,9 @@ void dump_selector(StringBuilder& builder, const CSS::Selector& selector)
             case CSS::Selector::SimpleSelector::PseudoClass::NthChild:
                 pseudo_class_description = "NthChild";
                 break;
+            case CSS::Selector::SimpleSelector::PseudoClass::NthLastChild:
+                pseudo_class_description = "NthLastChild";
+                break;
             case CSS::Selector::SimpleSelector::PseudoClass::Focus:
                 pseudo_class_description = "Focus";
                 break;
@@ -371,6 +376,18 @@ void dump_selector(StringBuilder& builder, const CSS::Selector& selector)
                 break;
             case CSS::Selector::SimpleSelector::PseudoClass::OnlyChild:
                 pseudo_class_description = "OnlyChild";
+                break;
+            case CSS::Selector::SimpleSelector::PseudoClass::Disabled:
+                pseudo_class_description = "Disabled";
+                break;
+            case CSS::Selector::SimpleSelector::PseudoClass::Enabled:
+                pseudo_class_description = "Enabled";
+                break;
+            case CSS::Selector::SimpleSelector::PseudoClass::Checked:
+                pseudo_class_description = "Checked";
+                break;
+            case CSS::Selector::SimpleSelector::PseudoClass::Not:
+                pseudo_class_description = "Not";
                 break;
             }
 

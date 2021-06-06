@@ -16,14 +16,14 @@ namespace AudioServer {
 
 Mixer::Mixer()
     : m_device(Core::File::construct("/dev/audio", this))
-    , m_sound_thread(LibThread::Thread::construct(
+    , m_sound_thread(Threading::Thread::construct(
           [this] {
               mix();
               return 0;
           },
           "AudioServer[mixer]"))
 {
-    if (!m_device->open(Core::IODevice::WriteOnly)) {
+    if (!m_device->open(Core::OpenMode::WriteOnly)) {
         dbgln("Can't open audio device: {}", m_device->error_string());
         return;
     }

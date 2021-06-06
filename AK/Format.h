@@ -314,6 +314,18 @@ struct Formatter<char*> : Formatter<const char*> {
 template<size_t Size>
 struct Formatter<char[Size]> : Formatter<const char*> {
 };
+template<size_t Size>
+struct Formatter<unsigned char[Size]> : Formatter<StringView> {
+    void format(FormatBuilder& builder, const unsigned char* value)
+    {
+        if (m_mode == Mode::Pointer) {
+            Formatter<FlatPtr> formatter { *this };
+            formatter.format(builder, reinterpret_cast<FlatPtr>(value));
+        } else {
+            Formatter<StringView>::format(builder, { value, Size });
+        }
+    }
+};
 template<>
 struct Formatter<String> : Formatter<StringView> {
 };
@@ -436,6 +448,16 @@ void dmesgln(CheckedFormatString<Parameters...>&& fmt, const Parameters&... para
 {
     vdmesgln(fmt.view(), VariadicFormatParams { parameters... });
 }
+
+void v_critical_dmesgln(StringView fmtstr, TypeErasedFormatParams);
+
+// be very careful to not cause any allocations here, since we could be in
+// a very unstable situation
+template<typename... Parameters>
+void critical_dmesgln(CheckedFormatString<Parameters...>&& fmt, const Parameters&... parameters)
+{
+    v_critical_dmesgln(fmt.view(), VariadicFormatParams { parameters... });
+}
 #endif
 
 template<typename T, typename = void>
@@ -492,6 +514,7 @@ struct Formatter<FormatString> : Formatter<String> {
 } // namespace AK
 
 #ifdef KERNEL
+using AK::critical_dmesgln;
 using AK::dmesgln;
 #else
 using AK::out;

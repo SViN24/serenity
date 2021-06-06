@@ -7,6 +7,7 @@
 #pragma once
 
 #include <AK/Function.h>
+#include <AK/OwnPtr.h>
 #include <AK/String.h>
 #include <AK/WeakPtr.h>
 #include <LibCore/Object.h>
@@ -226,6 +227,8 @@ private:
     void set_current_backing_store(WindowBackingStore&, bool flush_immediately = false);
     void flip(const Vector<Gfx::IntRect, 32>& dirty_rects);
     void force_update();
+
+    WeakPtr<Widget> m_previously_focused_widget;
 
     OwnPtr<WindowBackingStore> m_front_store;
     OwnPtr<WindowBackingStore> m_back_store;

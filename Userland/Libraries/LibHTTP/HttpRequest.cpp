@@ -37,10 +37,13 @@ ByteBuffer HttpRequest::to_raw_request() const
     StringBuilder builder;
     builder.append(method_name());
     builder.append(' ');
-    builder.append(m_url.path());
+    // NOTE: The percent_encode is so that e.g. spaces are properly encoded.
+    auto path = m_url.path();
+    VERIFY(!path.is_empty());
+    builder.append(URL::percent_encode(m_url.path(), URL::PercentEncodeSet::EncodeURI));
     if (!m_url.query().is_empty()) {
         builder.append('?');
-        builder.append(m_url.query());
+        builder.append(URL::percent_encode(m_url.query(), URL::PercentEncodeSet::EncodeURI));
     }
     builder.append(" HTTP/1.1\r\nHost: ");
     builder.append(m_url.host());
@@ -160,7 +163,7 @@ Optional<HttpRequest> HttpRequest::from_raw_request(ReadonlyBytes raw_request)
     else
         return {};
 
-    request.m_resource = resource;
+    request.m_resource = URL::percent_decode(resource);
     request.m_headers = move(headers);
 
     return request;

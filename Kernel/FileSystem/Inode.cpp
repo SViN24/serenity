@@ -1,5 +1,6 @@
 /*
  * Copyright (c) 2018-2020, Andreas Kling <kling@serenityos.org>
+ * Copyright (c) 2021, sin-ack <sin-ack@protonmail.com>
  *
  * SPDX-License-Identifier: BSD-2-Clause
  */
@@ -20,14 +21,9 @@
 namespace Kernel {
 
 static SpinLock s_all_inodes_lock;
-static AK::Singleton<InlineLinkedList<Inode>> s_list;
+static AK::Singleton<Inode::List> s_list;
 
-SpinLock<u32>& Inode::all_inodes_lock()
-{
-    return s_all_inodes_lock;
-}
-
-InlineLinkedList<Inode>& Inode::all_with_lock()
+static Inode::List& all_with_lock()
 {
     VERIFY(s_all_inodes_lock.is_locked());
 
@@ -102,13 +98,17 @@ Inode::Inode(FS& fs, InodeIndex index)
     , m_index(index)
 {
     ScopedSpinLock all_inodes_lock(s_all_inodes_lock);
-    all_with_lock().append(this);
+    all_with_lock().append(*this);
 }
 
 Inode::~Inode()
 {
     ScopedSpinLock all_inodes_lock(s_all_inodes_lock);
-    all_with_lock().remove(this);
+    all_with_lock().remove(*this);
+
+    for (auto& watcher : m_watchers) {
+        watcher->unregister_by_inode({}, identifier());
+    }
 }
 
 void Inode::will_be_destroyed()
@@ -211,24 +211,47 @@ void Inode::set_metadata_dirty(bool metadata_dirty)
         // FIXME: Maybe we should hook into modification events somewhere else, I'm not sure where.
         //        We don't always end up on this particular code path, for instance when writing to an ext2fs file.
         for (auto& watcher : m_watchers) {
-            watcher->notify_inode_event({}, InodeWatcherEvent::Type::Modified);
+            watcher->notify_inode_event({}, identifier(), InodeWatcherEvent::Type::MetadataModified);
         }
     }
 }
 
-void Inode::did_add_child(const InodeIdentifier& child_id)
+void Inode::did_add_child(InodeIdentifier const&, String const& name)
 {
     Locker locker(m_lock);
+
     for (auto& watcher : m_watchers) {
-        watcher->notify_child_added({}, child_id);
+        watcher->notify_inode_event({}, identifier(), InodeWatcherEvent::Type::ChildCreated, name);
     }
 }
 
-void Inode::did_remove_child(const InodeIdentifier& child_id)
+void Inode::did_remove_child(InodeIdentifier const&, String const& name)
+{
+    Locker locker(m_lock);
+
+    if (name == "." || name == "..") {
+        // These are just aliases and are not interesting to userspace.
+        return;
+    }
+
+    for (auto& watcher : m_watchers) {
+        watcher->notify_inode_event({}, identifier(), InodeWatcherEvent::Type::ChildDeleted, name);
+    }
+}
+
+void Inode::did_modify_contents()
 {
     Locker locker(m_lock);
     for (auto& watcher : m_watchers) {
-        watcher->notify_child_removed({}, child_id);
+        watcher->notify_inode_event({}, identifier(), InodeWatcherEvent::Type::ContentModified);
+    }
+}
+
+void Inode::did_delete_self()
+{
+    Locker locker(m_lock);
+    for (auto& watcher : m_watchers) {
+        watcher->notify_inode_event({}, identifier(), InodeWatcherEvent::Type::Deleted);
     }
 }
 

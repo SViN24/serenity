@@ -21,8 +21,13 @@ class WebViewHooks;
 
 namespace Browser {
 
+class BrowserWindow;
+
 class Tab final : public GUI::Widget {
     C_OBJECT(Tab);
+
+    // FIXME: This should go away eventually.
+    friend class BrowserWindow;
 
 public:
     enum class Type {
@@ -41,8 +46,8 @@ public:
 
     void load(const URL&, LoadType = LoadType::Normal);
     void reload();
-    void go_back();
-    void go_forward();
+    void go_back(int steps = 1);
+    void go_forward(int steps = 1);
 
     void did_become_active();
     void context_menu_requested(const Gfx::IntPoint& screen_position);
@@ -50,12 +55,12 @@ public:
     void action_entered(GUI::Action&);
     void action_left(GUI::Action&);
 
-    Function<void(String)> on_title_change;
+    Function<void(const String&)> on_title_change;
     Function<void(const URL&)> on_tab_open_request;
     Function<void(Tab&)> on_tab_close_request;
     Function<void(const Gfx::Bitmap&)> on_favicon_change;
-    Function<String(const URL& url, Web::Cookie::Source source)> on_get_cookie;
-    Function<void(const URL& url, const Web::Cookie::ParsedCookie& cookie, Web::Cookie::Source source)> on_set_cookie;
+    Function<String(const URL&, Web::Cookie::Source source)> on_get_cookie;
+    Function<void(const URL&, const Web::Cookie::ParsedCookie& cookie, Web::Cookie::Source source)> on_set_cookie;
     Function<void()> on_dump_cookies;
 
     const String& title() const { return m_title; }
@@ -64,7 +69,10 @@ public:
     GUI::AbstractScrollableWidget& view();
 
 private:
-    explicit Tab(Type);
+    explicit Tab(BrowserWindow&, Type);
+
+    BrowserWindow const& window() const;
+    BrowserWindow& window();
 
     Web::WebViewHooks& hooks();
     void update_actions();
@@ -79,16 +87,11 @@ private:
     RefPtr<Web::InProcessWebView> m_page_view;
     RefPtr<Web::OutOfProcessWebView> m_web_content_view;
 
-    RefPtr<GUI::Action> m_go_back_action;
-    RefPtr<GUI::Action> m_go_forward_action;
-    RefPtr<GUI::Action> m_go_home_action;
-    RefPtr<GUI::Action> m_reload_action;
     RefPtr<GUI::TextBox> m_location_box;
     RefPtr<GUI::Button> m_bookmark_button;
     RefPtr<GUI::Window> m_dom_inspector_window;
     RefPtr<GUI::Window> m_console_window;
     RefPtr<GUI::Statusbar> m_statusbar;
-    RefPtr<GUI::Menubar> m_menubar;
     RefPtr<GUI::ToolbarContainer> m_toolbar_container;
 
     RefPtr<GUI::Menu> m_link_context_menu;
@@ -99,13 +102,10 @@ private:
     Gfx::ShareableBitmap m_image_context_menu_bitmap;
     URL m_image_context_menu_url;
 
-    GUI::ActionGroup m_user_agent_spoof_actions;
-    GUI::ActionGroup m_search_engine_actions;
-    RefPtr<GUI::Action> m_disable_user_agent_spoofing;
-
     RefPtr<GUI::Menu> m_tab_context_menu;
     RefPtr<GUI::Menu> m_page_context_menu;
-
+    RefPtr<GUI::Menu> m_go_back_context_menu;
+    RefPtr<GUI::Menu> m_go_forward_context_menu;
     String m_title;
     RefPtr<const Gfx::Bitmap> m_icon;
 

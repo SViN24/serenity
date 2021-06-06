@@ -137,7 +137,7 @@ struct [[gnu::packed]] received_packet_header {
 
 UNMAP_AFTER_INIT void NE2000NetworkAdapter::detect()
 {
-    static const auto ne2k_ids = Array<PCI::ID, 11> {
+    constexpr auto ne2k_ids = Array {
         PCI::ID { 0x10EC, 0x8029 }, // RealTek RTL-8029(AS)
 
         // List of clones, taken from Linux's ne2k-pci.c
@@ -166,7 +166,7 @@ UNMAP_AFTER_INIT NE2000NetworkAdapter::NE2000NetworkAdapter(PCI::Address address
     : PCI::Device(address, irq)
     , m_io_base(PCI::get_BAR0(pci_address()) & ~3)
 {
-    set_interface_name("ne2k");
+    set_interface_name(address);
 
     dmesgln("NE2000: Found @ {}", pci_address());
 
@@ -406,7 +406,7 @@ void NE2000NetworkAdapter::receive()
         dbgln_if(NE2000_DEBUG, "NE2000NetworkAdapter: Packet received {} length={}", (packet_ok ? "intact" : "damaged"), header.length);
 
         if (packet_ok) {
-            auto packet = ByteBuffer::create_uninitialized(sizeof(received_packet_header) + header.length);
+            auto packet = NetworkByteBuffer::create_uninitialized(sizeof(received_packet_header) + header.length);
             int bytes_left = packet.size();
             int current_offset = 0;
             int ring_offset = header_address;

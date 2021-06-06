@@ -12,6 +12,7 @@
 #include <AK/HashMap.h>
 #include <AK/RefCounted.h>
 #include <AK/StackInfo.h>
+#include <AK/Variant.h>
 #include <LibJS/Heap/Heap.h>
 #include <LibJS/Runtime/CommonPropertyNames.h>
 #include <LibJS/Runtime/Error.h>
@@ -22,6 +23,9 @@
 #include <LibJS/Runtime/Value.h>
 
 namespace JS {
+
+class Identifier;
+struct BindingPattern;
 
 enum class ScopeType {
     None,
@@ -39,7 +43,7 @@ struct ScopeFrame {
 };
 
 struct CallFrame {
-    const ASTNode* current_node;
+    const ASTNode* current_node { nullptr };
     FlyString function_name;
     Value callee;
     Value this_value;
@@ -96,8 +100,8 @@ public:
     {
         VERIFY(!exception());
         // Ensure we got some stack space left, so the next function call doesn't kill us.
-        // This value is merely a guess and might need tweaking at a later point.
-        if (m_stack_info.size_free() < 16 * KiB)
+        // Note: the 32 kiB used to be 16 kiB, but that turned out to not be enough with ASAN enabled.
+        if (m_stack_info.size_free() < 32 * KiB)
             throw_exception<Error>(global_object, "Call stack size limit exceeded");
         else
             m_call_stack.append(&call_frame);
@@ -162,14 +166,14 @@ public:
     void unwind(ScopeType type, FlyString label = {})
     {
         m_unwind_until = type;
-        m_unwind_until_label = label;
+        m_unwind_until_label = move(label);
     }
     void stop_unwind()
     {
         m_unwind_until = ScopeType::None;
         m_unwind_until_label = {};
     }
-    bool should_unwind_until(ScopeType type, FlyString label = {}) const
+    bool should_unwind_until(ScopeType type, FlyString const& label) const
     {
         if (m_unwind_until_label.is_null())
             return m_unwind_until == type;
@@ -180,7 +184,10 @@ public:
     ScopeType unwind_until() const { return m_unwind_until; }
 
     Value get_variable(const FlyString& name, GlobalObject&);
-    void set_variable(const FlyString& name, Value, GlobalObject&, bool first_assignment = false);
+    void set_variable(const FlyString& name, Value, GlobalObject&, bool first_assignment = false, ScopeObject* specific_scope = nullptr);
+    void assign(const Variant<NonnullRefPtr<Identifier>, NonnullRefPtr<BindingPattern>>& target, Value, GlobalObject&, bool first_assignment = false, ScopeObject* specific_scope = nullptr);
+    void assign(const FlyString& target, Value, GlobalObject&, bool first_assignment = false, ScopeObject* specific_scope = nullptr);
+    void assign(const NonnullRefPtr<BindingPattern>& target, Value, GlobalObject&, bool first_assignment = false, ScopeObject* specific_scope = nullptr);
 
     Reference get_reference(const FlyString& name);
 

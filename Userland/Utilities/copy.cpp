@@ -4,6 +4,7 @@
  * SPDX-License-Identifier: BSD-2-Clause
  */
 
+#include <AK/Assertions.h>
 #include <AK/ByteBuffer.h>
 #include <AK/String.h>
 #include <AK/StringBuilder.h>
@@ -43,7 +44,7 @@ static Options parse_options(int argc, char* argv[])
         auto c_stdin = Core::File::construct();
         bool success = c_stdin->open(
             STDIN_FILENO,
-            Core::IODevice::OpenMode::ReadOnly,
+            Core::OpenMode::ReadOnly,
             Core::File::ShouldCloseFileDescriptor::No);
         VERIFY(success);
         auto buffer = c_stdin->read_all();
